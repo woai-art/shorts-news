@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Short</title>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@700&family=Roboto:wght@400;700&family=Arsenal:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <style>
+        body { margin: 0; font-family: 'Roboto', sans-serif; background-color: #333; }
+        .container { width: 1080px; height: 1920px; position: relative; background: #e6e6cd; margin: 0 auto; }
+
+        /* --- Верхняя секция --- */
+        .news-header-section { width: 100%; height: 600px; position: relative; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }
+        .news-media-container { width: 100%; height: 100%; position: relative; overflow: hidden; }
+        .media-text-overlay { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent 0%, rgba(0,0,0,0.8) 100%); padding: 40px 20px 20px 20px; z-index: 10; }
+        .media-title { font-family: 'Oswald', sans-serif; font-size: 48px; font-weight: 700; color: white; text-shadow: 3px 3px 8px rgba(0,0,0,1); line-height: 1.15; text-align: center; text-transform: uppercase; letter-spacing: 1px; }
+        .news-media { width: 100%; height: 100%; object-fit: cover; transform: scale(1.0); }
+
+        /* --- Разделитель --- */
+        .brand-strip { width: 100%; height: 80px; background: linear-gradient(90deg, #dc143c 0%, #1e3a8a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
+        .brand-strip-text { font-family: 'Arsenal', sans-serif; font-size: 32px; font-weight: bold; color: white; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); }
+
+        /* --- Секция с текстом --- */
+        .content-section { padding: 40px; box-sizing: border-box; height: calc(1920px - 600px - 80px - 200px); overflow: hidden; display: flex; flex-direction: column; }
+        .source-info { display: flex; align-items: center; margin-bottom: 30px; flex-shrink: 0; }
+        .source-logo { width: 64px; height: 64px; object-fit: contain; margin-right: 20px; }
+        .source-text { font-family: 'Arsenal', sans-serif; font-size: 36px; font-weight: bold; color: #333; }
+        .news-text { color: #1a1a1a; line-height: 1.5; width: 100%; flex-grow: 1; overflow: hidden; }
+
+        /* --- Футер --- */
+        .footer-section { width: 100%; height: 200px; background-color: #ab6d4c; position: absolute; bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 40px; box-sizing: border-box; }
+        .footer-logo { width: 128px; height: auto; }
+        .date-time { font-family: 'Arsenal', sans-serif; font-size: 32px; font-weight: bold; color: white; text-align: right; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="news-header-section">
+            <div class="news-media-container">
+                <img src="{{NEWS_IMAGE}}" alt="News Media" class="news-media" id="newsMedia">
+                <video class="news-media" id="newsVideo" style="display: none;" muted autoplay loop><source src="{{NEWS_VIDEO}}" type="video/mp4"></video>
+                <div class="media-text-overlay"><h1 class="media-title" id="mediaTitle">{{NEWS_TITLE}}</h1></div>
+            </div>
+            <audio id="backgroundMusic" loop><source src="{{BACKGROUND_MUSIC}}" type="audio/mpeg"></audio>
+        </div>
+        <div class="brand-strip"><div class="brand-strip-text">Shorts NEWS</div></div>
+        <div class="content-section">
+            <div class="source-info">
+                <img src="{{SOURCE_LOGO}}" alt="Source" class="source-logo">
+                <div class="source-text">{{SOURCE_NAME}}</div>
+            </div>
+            <div class="news-text" id="newsText">{{NEWS_BRIEF}}</div>
+        </div>
+        <div class="footer-section">
+            <img src="../resources/logo.png" alt="Logo" class="footer-logo">
+            <div class="date-time">
+                <div>{{PUBLISH_DATE}}</div>
+                <div>{{PUBLISH_TIME}}</div>
+            </div>
+        </div>
+    </div>
+    <script>
+        function adjustFontSize() {
+            const newsText = document.getElementById('newsText'), contentSection = document.querySelector('.content-section'), sourceInfo = document.querySelector('.source-info');
+            if (!newsText || !contentSection || !sourceInfo) return;
+            const availableHeight = contentSection.offsetHeight - sourceInfo.offsetHeight - 60;
+            const textLength = (newsText.textContent || newsText.innerText).length;
+            let fontSize = 48;
+            if (textLength > 200) fontSize = 42; if (textLength > 350) fontSize = 38; if (textLength > 500) fontSize = 34;
+            newsText.style.fontSize = fontSize + 'px';
+            let attempts = 0;
+            while (newsText.scrollHeight > availableHeight && fontSize > 20 && attempts < 20) {
+                fontSize--; newsText.style.fontSize = fontSize + 'px'; attempts++;
+            }
+        }
+        function adjustMediaTitleSize() {
+            const mediaTitle = document.getElementById('mediaTitle');
+            if (!mediaTitle) return;
+            const titleLength = (mediaTitle.textContent || mediaTitle.innerText).length;
+            let fontSize = 48;
+            if (titleLength > 50) fontSize = 42; if (titleLength > 70) fontSize = 38;
+            mediaTitle.style.fontSize = fontSize + 'px';
+        }
+        function initializeMedia() {
+            const newsImage = document.getElementById('newsMedia'), newsVideo = document.getElementById('newsVideo'), videoSource = newsVideo.querySelector('source');
+            const hasVideo = videoSource && videoSource.src && !videoSource.src.endsWith('{{NEWS_VIDEO}}');
+            if (hasVideo) {
+                newsVideo.style.display = 'block'; newsImage.style.display = 'none'; startZoomAnimation(newsVideo); newsVideo.play().catch(e => {});
+            } else {
+                startZoomAnimation(newsImage);
+            }
+        }
+        function startZoomAnimation(el) { if (el) gsap.to(el, { scale: 1.15, duration: 5, ease: "power1.inOut" }); }
+        document.addEventListener('DOMContentLoaded', () => { adjustFontSize(); adjustMediaTitleSize(); initializeMedia(); });
+    </script>
+</body>
+</html>

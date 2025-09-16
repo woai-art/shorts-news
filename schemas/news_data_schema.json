@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "News Data Package",
+  "description": "Complete structured news data package for video creation",
+  "type": "object",
+  "properties": {
+    "source": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "description": "Source name (e.g., CNN, BBC)"},
+        "logo_url": {"type": "string", "description": "URL or path to source logo"},
+        "author": {"type": "string", "description": "Article author if available"},
+        "url": {"type": "string", "description": "Original article URL"}
+      },
+      "required": ["name", "url"]
+    },
+    "publication": {
+      "type": "object", 
+      "properties": {
+        "date": {"type": "string", "format": "date", "description": "Publication date (YYYY-MM-DD)"},
+        "time": {"type": "string", "format": "time", "description": "Publication time (HH:MM)"},
+        "timestamp": {"type": "string", "format": "date-time", "description": "Full ISO timestamp"}
+      },
+      "required": ["date", "time"]
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "primary_image": {"type": "string", "description": "Main article image URL"},
+        "video_url": {"type": "string", "description": "Video URL if available"},
+        "thumbnail": {"type": "string", "description": "Thumbnail image URL"},
+        "alt_text": {"type": "string", "description": "Alt text for accessibility"}
+      }
+    },
+    "content": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string", "maxLength": 80, "description": "Concise title for video"},
+        "summary": {"type": "string", "maxLength": 600, "description": "Neutral, factual summary with key quotes preserved"},
+        "key_points": {
+          "type": "array",
+          "items": {"type": "string"},
+          "maxItems": 5,
+          "description": "Main points extracted from the article"
+        },
+        "quotes": {
+          "type": "array", 
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {"type": "string", "description": "Original quote text"},
+              "speaker": {"type": "string", "description": "Who said it"}
+            }
+          },
+          "description": "Important quotes preserved exactly as written"
+        }
+      },
+      "required": ["title", "summary"]
+    },
+    "seo": {
+      "type": "object",
+      "properties": {
+        "youtube_title": {"type": "string", "maxLength": 100, "description": "YouTube video title"},
+        "youtube_description": {"type": "string", "maxLength": 5000, "description": "YouTube description with hashtags"},
+        "tags": {
+          "type": "array",
+          "items": {"type": "string"},
+          "maxItems": 15,
+          "description": "YouTube tags for discoverability"
+        },
+        "hashtags": {
+          "type": "array",
+          "items": {"type": "string"},
+          "maxItems": 30,
+          "description": "Hashtags for social media"
+        },
+        "category": {"type": "string", "description": "Content category"}
+      },
+      "required": ["youtube_title", "youtube_description", "tags"]
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "language": {"type": "string", "default": "en"},
+        "processed_at": {"type": "string", "format": "date-time"},
+        "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "fact_check": {
+          "type": "object",
+          "properties": {
+            "accuracy_score": {"type": "number", "minimum": 0, "maximum": 1},
+            "verification_status": {"type": "string", "enum": ["verified", "disputed", "unknown"]},
+            "sources_used": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    }
+  },
+  "required": ["source", "publication", "content", "seo"]
+}

@@ -1,0 +1,187 @@
+# Основная конфигурация проекта shorts_news
+project:
+  name: "News Shorts Generator"
+  version: "1.0.0"
+  base_path: "D:/work/shorts_news"
+
+# Настройки парсера новостей из Telegram
+news_parser:
+  db_path: "data/news.db"
+  update_interval_seconds: 30  # Частота проверки новых сообщений
+  max_news_per_check: 10  # Максимум новостей за один цикл
+  languages: ["en", "uk", "ru"]
+  # Настройки для веб-парсера
+  web_parser_timeout: 15  # Таймаут для парсинга веб-страниц
+  max_images_per_news: 3  # Максимум изображений на новость
+  # Настройки для медиа-файлов
+  max_video_duration_seconds: 300  # Максимум 5 минут для видео (можно увеличить до 600 для 10 минут)
+  max_video_size_mb: 100  # Максимум 100MB для видео (увеличено с 25MB)
+  max_image_size_mb: 10   # Максимум 10MB для изображений
+  target_short_duration_seconds: 15  # Целевая длительность для шортсов (для обрезки)
+
+# Настройки LLM обработки
+llm:
+  provider: "gemini"  # gemini, openai, anthropic
+  model: "models/gemini-2.0-flash"  # Используем самую продвинутую модель
+  api_key_env: "GEMINI_API_KEY"
+  temperature: 0.7
+  max_tokens: 2000
+  short_text_max_length: 600  # Увеличили для профессионального новостного стиля
+  seo_title_max_length: 100  # Оптимальная длина для YouTube SEO
+  force_direct_api: false      # Используем SDK с настоящим Google Search Grounding
+  
+  # Настройки для Google Search Grounding (проверка фактов)
+  grounding:
+    enable_fact_checking: true
+    grounding_temperature: 0.3
+    fact_check_threshold: 0.7  # Минимальный порог точности
+
+# Настройки видео генерации
+video:
+  width: 1080
+  height: 1920  # 9:16 aspect ratio for shorts
+  duration_seconds: 6
+  fps: 30
+
+  # Размеры секций видео (в долях от высоты)
+  header_ratio: 0.35  # Медиа-шапка (изображение/видео)
+  title_ratio: 0.15   # Заголовок новости
+  middle_ratio: 0.40  # Основной текст новости
+  footer_ratio: 0.10  # Дата и источник
+
+  # Цвета фона (RGB)
+  title_bg_rgb: [60, 60, 60]    # Темно-серый для заголовка
+  middle_bg_rgb: [40, 40, 40]   # Серый для основного текста
+  footer_bg_rgb: [0, 0, 0]      # Черный для футера
+
+  # Шрифты
+  title_font_path: "resources/fonts/Cinzel,Cormorant/Cinzel/static/Cinzel-Bold.ttf"
+  middle_font_path: "resources/fonts/Arsenal-Bold.ttf"  # Возвращаем Arsenal для лучшей читаемости
+  footer_font_path: "resources/fonts/Arsenal-Bold.ttf"
+  font_size_header: 48
+  font_size_middle: 36
+  font_size_footer: 24
+
+  # Анимации
+  header_zoom_start: 1.05
+  header_zoom_end: 1.00
+  heartbeat_enabled: true
+  heartbeat_cycle_seconds: 1.6
+  heartbeat_height_ratio: 0.10
+
+# Пути к ресурсам
+paths:
+  media_dir: "media"              # Логотипы новостных агентств
+  templates_dir: "templates"      # HTML шаблоны для анимаций
+  animations_dir: "animations"    # JS файлы анимаций
+  outputs_dir: "outputs"          # Готовые видео файлы
+  logs_dir: "logs"                # Логи работы
+  temp_dir: "temp"                # Временные файлы
+  scripts_dir: "scripts"          # Скрипты автоматизации
+  logos_dir: "resources/logos"    # Логотипы новостных источников
+
+# Маппинг источников новостей и их логотипов
+news_sources:
+  cnn:
+    domains: ["cnn.com", "edition.cnn.com"]
+    logo_file: "cnn.png"
+    display_name: "CNN"
+  bbc:
+    domains: ["bbc.com", "bbc.co.uk"]
+    logo_file: "bbc.png"
+    display_name: "BBC"
+  reuters:
+    domains: ["reuters.com"]
+    logo_file: "reuters.png"
+    display_name: "Reuters"
+  ap:
+    domains: ["apnews.com"]
+    logo_file: "ap.png"
+    display_name: "AP News"
+  guardian:
+    domains: ["theguardian.com"]
+    logo_file: "guardian.png"
+    display_name: "The Guardian"
+  nytimes:
+    domains: ["nytimes.com"]
+    logo_file: "nytimes.png"
+    display_name: "The New York Times"
+  washingtonpost:
+    domains: ["washingtonpost.com"]
+    logo_file: "washingtonpost.png"
+    display_name: "The Washington Post"
+  twitter:
+    domains: ["twitter.com", "x.com"]
+    logo_file: "twitter.png"
+    display_name: "X"
+    auto_download: true  # Включает автоматическое скачивание аватарок
+
+# YouTube настройки
+youtube:
+  privacy_status: "private"  # private, public, unlisted
+  category_id: "25"  # News & Politics
+  client_secret_file: "config/client_secret.json"
+  upload_enabled: true
+
+# Telegram бот настройки для мониторинга
+telegram:
+  enabled: true
+  api_id_env: "TELEGRAM_API_ID"
+  api_hash_env: "TELEGRAM_API_HASH"
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  channel: "@tubepull_bot"  # Канал для мониторинга новостей
+  channel_id: "-1003056499503"  # ID канала для мониторинга
+  poll_interval_seconds: 10
+  startup_backfill_hours: 1
+
+# Telegram бот для публикации результатов
+telegram_publish:
+  enabled: true
+  bot_token: "8487619280:AAFky_mNFaFTCUovTpSiWm1wr7Kh935QXWQ"
+  channel: "@tubepush_bot"
+  channel_id: "-1002685642224"
+  max_caption_length: 1024
+  send_video: true
+  send_text: true
+  send_images: true
+
+# Настройки логирования
+logging:
+  level: "INFO"
+  max_file_size_mb: 10
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Настройки мониторинга
+monitoring:
+  enabled: true
+  metrics_interval_minutes: 5
+  alerts_enabled: false
+
+# Расширенные настройки обработки
+processing:
+  enable_multilingual: true
+  supported_languages: ["en", "uk", "ru", "de", "fr"]
+  enable_categorization: true
+  categories: ["politics", "business", "technology", "sports", "entertainment", "health", "science"]
+  enable_sentiment_analysis: false
+  max_processing_time_seconds: 300
+
+# Настройки публикации
+publishing:
+  enable_video_publishing: true
+  enable_image_publishing: true
+  enable_text_fallback: true
+  max_caption_length: 1024
+  enable_hashtags: true
+  hashtag_limit: 5
+  enable_source_attribution: true
+  enable_source_logos: true
+
+# Настройки логотипов источников
+source_logos:
+  enabled: true
+  logo_dir: "assets/logos"
+  default_logo: "assets/logos/default.png"
+  supported_formats: ["png", "jpg", "jpeg", "svg"]
+  max_logo_size_kb: 500

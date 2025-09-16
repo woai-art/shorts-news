@@ -1,0 +1,13 @@
+# Создайте файл config/.env со следующим содержимым:
+
+# Google Gemini API Key
+GOOGLE_API_KEY=AIzaSyDGREzWC-kTGylqpXfJlZWNE625a8TaGT0
+
+# Telegram Bot Token
+TELEGRAM_BOT_TOKEN=8397627473:AAFZmCcoAEgjAI1vtaMXEpeSq6J8LJGI-eg
+
+# Инструкция:
+# 1. Скопируйте содержимое выше
+# 2. Создайте файл config/.env
+# 3. Вставьте содержимое в файл
+# 4. Сохраните файл

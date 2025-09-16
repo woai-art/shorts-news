@@ -1,0 +1,123 @@
+# Источники новостей для shorts_news
+# Основные мировые СМИ с логотипами в папке media
+
+sources:
+  - name: BBC News
+    rss: https://feeds.bbci.co.uk/news/rss.xml
+    lang: en
+    logo: media/BBC.jpg
+    categories: ["Мир", "Политика"]
+    priority: high
+
+  - name: CNN
+    rss: http://rss.cnn.com/rss/edition.rss
+    lang: en
+    logo: media/CNN.jpg
+    categories: ["Мир", "Политика", "Экономика"]
+    priority: high
+
+  - name: Reuters
+    rss: http://feeds.reuters.com/reuters/topNews
+    lang: en
+    logo: media/Reuters.jpg
+    categories: ["Мир", "Бизнес", "Политика"]
+    priority: high
+
+  - name: Associated Press
+    rss: https://feeds.apnews.com/rss/apf-topnews
+    lang: en
+    logo: media/AssociatedPress.jpg
+    categories: ["Мир", "Политика"]
+    priority: high
+
+  - name: New York Times
+    rss: https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml
+    lang: en
+    logo: media/NYTimes.png
+    categories: ["Мир", "Политика", "Экономика"]
+    priority: high
+
+  - name: Washington Post
+    rss: http://feeds.washingtonpost.com/rss/world
+    lang: en
+    logo: media/WashingtonPost.jpg
+    categories: ["Мир", "Политика", "США"]
+    priority: high
+
+  - name: Fox News
+    rss: http://feeds.foxnews.com/foxnews/politics
+    lang: en
+    logo: media/FoxNews.png
+    categories: ["Политика", "США"]
+    priority: medium
+
+  - name: CNBC
+    rss: https://www.cnbc.com/id/100003114/device/rss/rss.html
+    lang: en
+    logo: media/CNBC.png
+    categories: ["Бизнес", "Экономика", "Финансы"]
+    priority: medium
+
+  - name: Al Jazeera
+    rss: https://www.aljazeera.com/xml/rss/all.xml
+    lang: en
+    logo: media/ALJAZEERA.jpg
+    categories: ["Мир", "Политика", "Ближний Восток"]
+    priority: medium
+
+  - name: Wall Street Journal
+    rss: https://feeds.a.dj.com/rss/RSSWorldNews.xml
+    lang: en
+    logo: media/WSJ.jpg
+    categories: ["Бизнес", "Экономика", "Финансы"]
+    priority: medium
+
+  - name: ABC News
+    rss: https://abcnews.go.com/abcnews/topstories
+    lang: en
+    logo: media/ABC.jpg
+    categories: ["Мир", "Политика", "США"]
+    priority: medium
+
+# Украинские источники
+  - name: УНИАН
+    rss: https://www.unian.net/rss/index.xml
+    lang: uk
+    categories: ["Украина", "Мир"]
+    priority: medium
+
+# Научные источники
+  - name: NASA Breaking News
+    rss: https://www.nasa.gov/rss/dyn/breaking_news.rss
+    lang: en
+    categories: ["Наука", "Космос", "Технологии"]
+    priority: low
+
+# Фильтры для отбора новостей
+filters:
+  # Минимальная длина заголовка
+  min_title_length: 10
+
+  # Максимальная длина заголовка для shorts
+  max_title_length: 80
+
+  # Ключевые слова для фильтрации (если есть в заголовке - пропустить)
+  skip_keywords:
+    - "weather"
+    - "sports"
+    - "entertainment"
+    - "celebrity"
+    - "gossip"
+
+  # Приоритетные ключевые слова (увеличивают приоритет новости)
+  priority_keywords:
+    - "breaking"
+    - "urgent"
+    - "major"
+    - "crisis"
+    - "war"
+    - "election"
+    - "president"
+    - "government"
+    - "economy"
+    - "disaster"

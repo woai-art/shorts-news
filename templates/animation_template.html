@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Shorts Animation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 1080px;
+            height: 1920px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        /* Header section - Logo and source */
+        .header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 40%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .logo-container {
+            width: 200px;
+            height: 120px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+            opacity: 0;
+        }
+
+        .logo {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 10px;
+        }
+
+        .source-text {
+            font-size: 36px;
+            font-weight: bold;
+            color: #ffffff;
+            text-align: center;
+            opacity: 0;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Body section - Main news text */
+        .body {
+            position: absolute;
+            top: 40%;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 40px;
+        }
+
+        .news-text {
+            font-size: 42px;
+            font-weight: 600;
+            color: #ffffff;
+            text-align: center;
+            line-height: 1.3;
+            opacity: 0;
+            text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.7);
+            max-width: 100%;
+            word-wrap: break-word;
+        }
+
+        /* Footer section - Date and branding */
+        .footer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 10%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 40px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+        }
+
+        .date {
+            font-size: 28px;
+            color: #cccccc;
+            opacity: 0;
+        }
+
+        .branding {
+            font-size: 24px;
+            color: #888888;
+            opacity: 0;
+        }
+
+        /* Heartbeat animation overlay */
+        .heartbeat-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 107, 53, 0.3) 0%, transparent 70%);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Particles effect */
+        .particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            opacity: 0;
+        }
+
+        /* Responsive text sizing */
+        @media (max-width: 1080px) {
+            .news-text {
+                font-size: 36px;
+            }
+            .source-text {
+                font-size: 32px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header Section -->
+        <div class="header">
+            <div class="logo-container">
+                <img id="source-logo" class="logo" src="" alt="News Source Logo">
+            </div>
+            <div class="source-text" id="source-name">NEWS SOURCE</div>
+        </div>
+
+        <!-- Body Section -->
+        <div class="body">
+            <div class="news-text" id="news-content">
+                <!-- News text will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="footer">
+            <div class="date" id="news-date">DD.MM.YYYY</div>
+            <div class="branding">News Shorts</div>
+        </div>
+
+        <!-- Effects -->
+        <div class="heartbeat-overlay" id="heartbeat"></div>
+        <div class="particles" id="particles"></div>
+    </div>
+
+    <script>
+        // Animation data will be injected here
+        const animationData = {{ANIMATION_DATA}};
+
+        // GSAP Timeline
+        const tl = gsap.timeline();
+
+        // Utility functions
+        function createParticles() {
+            const particlesContainer = document.getElementById('particles');
+            const particleCount = 20;
+
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+
+                // Random position
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.top = Math.random() * 100 + '%';
+
+                particlesContainer.appendChild(particle);
+
+                // Animate particle
+                gsap.to(particle, {
+                    duration: 2 + Math.random() * 2,
+                    opacity: 1,
+                    scale: 1.5,
+                    y: -100 - Math.random() * 200,
+                    x: (Math.random() - 0.5) * 200,
+                    ease: "power2.out",
+                    delay: Math.random() * 3,
+                    repeat: -1,
+                    yoyo: true
+                });
+            }
+        }
+
+        function animateText(elementId, text, animationType, duration) {
+            const element = document.getElementById(elementId);
+
+            if (animationType === 'typewriter') {
+                // Typewriter effect
+                element.textContent = '';
+                element.style.opacity = 1;
+
+                let i = 0;
+                const timer = setInterval(() => {
+                    if (i < text.length) {
+                        element.textContent += text.charAt(i);
+                        i++;
+                    } else {
+                        clearInterval(timer);
+                    }
+                }, duration * 1000 / text.length);
+
+            } else if (animationType === 'fadeIn') {
+                element.textContent = text;
+                gsap.fromTo(element,
+                    { opacity: 0, y: 30 },
+                    { opacity: 1, y: 0, duration: duration, ease: "power2.out" }
+                );
+
+            } else if (animationType === 'slideUp') {
+                element.textContent = text;
+                gsap.fromTo(element,
+                    { opacity: 0, y: 50 },
+                    { opacity: 1, y: 0, duration: duration, ease: "back.out(1.7)" }
+                );
+
+            } else {
+                // Default fade in
+                element.textContent = text;
+                gsap.to(element, { opacity: 1, duration: duration });
+            }
+        }
+
+        function animateHeartbeat() {
+            const heartbeat = document.getElementById('heartbeat');
+            const config = animationData.style || {};
+
+            if (config.heartbeat_enabled) {
+                gsap.timeline({ repeat: -1 })
+                    .to(heartbeat, {
+                        duration: config.heartbeat_cycle_seconds || 1.6,
+                        scale: 1.2,
+                        opacity: config.heartbeat_opacity_main || 0.8,
+                        ease: "power2.inOut"
+                    })
+                    .to(heartbeat, {
+                        duration: config.heartbeat_cycle_seconds || 1.6,
+                        scale: 1,
+                        opacity: 0,
+                        ease: "power2.inOut"
+                    });
+            }
+        }
+
+        // Main animation sequence
+        function startAnimation() {
+            const header = animationData.header || {};
+            const body = animationData.body || {};
+            const footer = animationData.footer || {};
+            const style = animationData.style || {};
+
+            // Set background color if specified
+            if (style.accent_color) {
+                document.body.style.background = `linear-gradient(135deg, ${style.accent_color}20 0%, #16213e 50%, #0f3460 100%)`;
+            }
+
+            // Create particles
+            createParticles();
+
+            // Animation timeline
+            tl
+                // Header animation
+                .call(() => {
+                    if (header.text) {
+                        animateText('source-name', header.text, header.animation, header.duration);
+                    }
+                })
+                .to('.logo-container', { opacity: 1, duration: 0.5 }, "-=0.5")
+
+                // Body animation (after header)
+                .call(() => {
+                    if (body.text) {
+                        animateText('news-content', body.text, body.animation, body.duration);
+                    }
+                }, null, "+=0.5")
+
+                // Footer animation
+                .call(() => {
+                    if (footer.date) {
+                        animateText('news-date', footer.date, footer.animation, footer.duration);
+                    }
+                    animateText('branding', 'News Shorts', 'fadeIn', 0.5);
+                }, null, "+=1")
+
+                // Start heartbeat effect
+                .call(animateHeartbeat, null, "+=0.5");
+
+            // Set logo if provided
+            if (animationData.logo_url) {
+                document.getElementById('source-logo').src = animationData.logo_url;
+            }
+
+            // Set total duration for video export
+            const totalDuration = (header.duration || 1.5) + (body.duration || 2.5) + (footer.duration || 1) + 2;
+            console.log(`Animation duration: ${totalDuration}s`);
+        }
+
+        // Start animation when page loads
+        window.addEventListener('load', () => {
+            setTimeout(startAnimation, 500); // Small delay to ensure everything is loaded
+        });
+
+        // For video export - pause at the end
+        setTimeout(() => {
+            tl.pause();
+        }, 8000); // Pause after 8 seconds for video capture
+    </script>
+</body>
+</html>
