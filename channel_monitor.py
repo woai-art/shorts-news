@@ -52,9 +52,9 @@ class ChannelMonitor:
         
         # Настройки извлекаются из переменных окружения или конфига
         self.monitor_channel_id = os.getenv("MONITOR_CHANNEL_ID", "-1003056499503")
-        self.bot_token = os.getenv("MONITOR_BOT_TOKEN", "8397627473:AAFZmCcoAEgjAI1vtaMXEpeSq6J8LJGI-eg")
-        self.publish_channel_id = os.getenv("PUBLISH_CHANNEL_ID", "-1002685642224")
-        self.publish_bot_token = os.getenv("PUBLISH_BOT_TOKEN", "8487619280:AAFky_mNFaFTCUovTpSiWm1wr7Kh935QXWQ")
+        self.bot_token = os.getenv("MONITOR_BOT_TOKEN", "YOUR_MONITOR_BOT_TOKEN_HERE")
+        self.publish_channel_id = os.getenv("PUBLISH_CHANNEL_ID", "YOUR_PUBLISH_CHANNEL_ID_HERE")
+        self.publish_bot_token = os.getenv("PUBLISH_BOT_TOKEN", "YOUR_PUBLISH_BOT_TOKEN_HERE")
         
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.publish_base_url = f"https://api.telegram.org/bot{self.publish_bot_token}"

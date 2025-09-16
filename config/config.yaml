@@ -137,7 +137,7 @@ telegram:
 # Telegram бот для публикации результатов
 telegram_publish:
   enabled: true
-  bot_token: "8487619280:AAFky_mNFaFTCUovTpSiWm1wr7Kh935QXWQ"
+  bot_token: "YOUR_PUBLISH_BOT_TOKEN_HERE"
   channel: "@tubepush_bot"
   channel_id: "-1002685642224"
   max_caption_length: 1024

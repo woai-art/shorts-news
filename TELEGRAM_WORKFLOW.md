@@ -81,7 +81,7 @@ python start_telegram_workflow.py --bot
 ### Основной канал
 
 - **Канал**: `@tubepull_bot`
-- **Токен**: `8397627473:AAFZmCcoAEgjAI1vtaMXEpeSq6J8LJGI-eg`
+- **Токен**: `YOUR_TELEGRAM_BOT_TOKEN_HERE`
 
 ### Формат сообщений
 

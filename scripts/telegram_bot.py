@@ -43,7 +43,7 @@ class NewsTelegramBot:
         # Настройки Telegram
         self.telegram_config = self.config['telegram']
         # Используем фиксированный токен для tubepull_bot
-        self.bot_token = "8397627473:AAFZmCcoAEgjAI1vtaMXEpeSq6J8LJGI-eg"
+        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
         self.channel = self.telegram_config.get('channel', "@tubepull_bot")
         self.channel_id = self.telegram_config.get('channel_id', "")
 

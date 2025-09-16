@@ -18,7 +18,7 @@ async def test_basic_message():
         from telegram import Bot
 
         # Токен бота
-        bot_token = "8487619280:AAFky_mNFaFTCUovTpSiWm1wr7Kh935QXWQ"
+        bot_token = os.getenv("PUBLISH_BOT_TOKEN", "YOUR_PUBLISH_BOT_TOKEN_HERE")
         channel = "@tubepush_bot"
         channel_id = "-1002685642224"  # Используем числовой ID
 
@@ -48,7 +48,7 @@ async def test_get_chat_info():
     try:
         from telegram import Bot
 
-        bot_token = "8487619280:AAFky_mNFaFTCUovTpSiWm1wr7Kh935QXWQ"
+        bot_token = os.getenv("PUBLISH_BOT_TOKEN", "YOUR_PUBLISH_BOT_TOKEN_HERE")
         channel = "@tubepush_bot"
         channel_id = "-1002685642224"
 

@@ -112,8 +112,8 @@ def main():
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
 
-        token = "8397627473:AAFZmCcoAEgjAI1vtaMXEpeSq6J8LJGI-eg"  # tubepull_bot
-        channel_id = "-1003056499503"  # Канал мониторинга
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
+        channel_id = os.getenv("MONITOR_CHANNEL_ID", "YOUR_MONITOR_CHANNEL_ID_HERE")
 
         print(f"🔑 Токен: {token[:10]}...")
         print(f"📱 Канал ID: {channel_id}")
