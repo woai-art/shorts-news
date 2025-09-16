@@ -70,7 +70,38 @@ class MediaManager:
         
         try:
             images = news_data.get('images', [])
+            videos = news_data.get('videos', [])
             
+            # Обрабатываем видео в первую очередь
+            if videos:
+                logger.info(f"🎬 Найдено {len(videos)} видео для обработки")
+                
+                for video_url in videos:
+                    if not video_url:
+                        continue
+                        
+                    logger.info(f"🎥 Обрабатываем видео: {video_url[:50]}...")
+                    
+                    # Определяем тип видео
+                    if 'brightcove' in video_url:
+                        local_path = self._download_brightcove_video_with_ytdlp(video_url, news_data.get('title', 'news'))
+                    elif 'twitter.com' in video_url or 'x.com' in video_url:
+                        local_path = self._download_twitter_video_with_ytdlp(video_url, news_data.get('title', 'news'))
+                    else:
+                        local_path = self._download_and_process_video(video_url, news_data.get('title', 'news'))
+                    
+                    if local_path:
+                        media_result.update({
+                            'video_url': video_url,
+                            'local_video_path': local_path,
+                            'thumbnail': local_path
+                        })
+                        logger.info(f"✅ Видео успешно обработано: {local_path}")
+                        return media_result
+                    else:
+                        logger.warning(f"⚠️ Не удалось обработать видео: {video_url}")
+            
+            # Если видео не найдено, обрабатываем изображения
             if images:
                 logger.info(f"📸 Найдено {len(images)} изображений для обработки")
                 
@@ -443,6 +474,8 @@ class MediaManager:
         elif 'pbs.twimg.com' in video_url:
             logger.warning("⚠️ Прямые ссылки Twitter медиа заблокированы, используем обычный метод")
             return self._download_video_direct(video_url, news_title)
+        elif 'brightcove' in video_url:
+            return self._download_brightcove_video_with_ytdlp(video_url, news_title)
         
         return self._download_video_direct(video_url, news_title)
     
@@ -508,6 +541,64 @@ class MediaManager:
             return None
         except Exception as e:
             logger.error(f"❌ Ошибка yt-dlp для Twitter видео: {e}")
+            return None
+    
+    def _download_brightcove_video_with_ytdlp(self, video_url: str, news_title: str) -> Optional[str]:
+        """Скачивание Brightcove видео через yt-dlp"""
+        try:
+            import subprocess
+            import json
+            from pathlib import Path
+            
+            # Создаем безопасное имя файла
+            safe_title = "".join(c for c in news_title if c.isalnum() or c in (' ', '-', '_')).rstrip()[:50]
+            safe_title = safe_title.replace(' ', '_')
+            
+            output_path = self.media_dir / f"{safe_title}_{hash(video_url) % 1000000}.mp4"
+            
+            # Команда yt-dlp для Brightcove
+            cmd = [
+                'yt-dlp',
+                '--format', 'best[ext=mp4]/best',  # Лучшее качество в mp4 или любое
+                '--output', str(output_path),
+                '--no-playlist',
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                video_url
+            ]
+            
+            logger.info(f"🔄 Пробуем yt-dlp для Brightcove видео: {video_url[:50]}...")
+            
+            # Запускаем yt-dlp
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if result.returncode == 0 and output_path.exists():
+                # Проверяем длительность
+                try:
+                    from moviepy import VideoFileClip
+                    with VideoFileClip(str(output_path)) as video_clip:
+                        duration = video_clip.duration
+                        if duration > self.max_video_duration:
+                            logger.warning(f"⚠️ Видео слишком длинное: {duration}с (максимум {self.max_video_duration}с)")
+                            output_path.unlink()
+                            return None
+                        
+                        logger.info(f"✅ Brightcove видео загружено через yt-dlp: {output_path} (длительность: {duration:.1f}с)")
+                        return str(output_path)
+                except ImportError:
+                    logger.info(f"✅ Brightcove видео загружено через yt-dlp: {output_path}")
+                    return str(output_path)
+            else:
+                logger.warning(f"⚠️ yt-dlp не смог загрузить Brightcove видео: {result.stderr}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            logger.error("❌ yt-dlp превысил время ожидания для Brightcove видео")
+            return None
+        except FileNotFoundError:
+            logger.warning("⚠️ yt-dlp не установлен. Установите: pip install yt-dlp")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Ошибка yt-dlp для Brightcove видео: {e}")
             return None
     
     def _download_video_direct(self, video_url: str, news_title: str) -> Optional[str]:

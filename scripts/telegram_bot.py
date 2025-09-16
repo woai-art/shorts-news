@@ -9,6 +9,7 @@ import sys
 import logging
 import asyncio
 import re
+import time
 from typing import Dict, Optional, Any
 import yaml
 import sqlite3
@@ -429,8 +430,8 @@ class NewsTelegramBot:
                     INSERT INTO user_news (
                         url, title, description, published_date, source,
                         content_type, user_id, chat_id, fact_check_score,
-                        verification_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        verification_status, images, videos
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     news_data.get('url'),
                     news_data.get('title', 'Без заголовка'),
@@ -441,7 +442,9 @@ class NewsTelegramBot:
                     user_id,
                     chat_id,
                     news_data.get('fact_verification', {}).get('accuracy_score'),
-                    news_data.get('fact_verification', {}).get('verification_status')
+                    news_data.get('fact_verification', {}).get('verification_status'),
+                    ','.join(news_data.get('images', [])),
+                    ','.join(news_data.get('videos', []))
                 ))
 
                 news_id = cursor.lastrowid
@@ -540,8 +543,19 @@ class NewsTelegramBot:
                 # Маппинг полей БД к ожидаемым названиям
                 if 'published_date' in news_dict:
                     news_dict['published'] = news_dict['published_date']
+                
+                # Обработка медиа из БД
+                if 'images' in news_dict and news_dict['images']:
+                    news_dict['images'] = news_dict['images'].split(',') if news_dict['images'] else []
+                else:
+                    news_dict['images'] = []
+                    
+                if 'videos' in news_dict and news_dict['videos']:
+                    news_dict['videos'] = news_dict['videos'].split(',') if news_dict['videos'] else []
+                else:
+                    news_dict['videos'] = []
 
-                # Получение изображений для новости
+                # Получение изображений для новости (из БД + из news_images таблицы)
                 images_cursor = conn.execute('''
                     SELECT image_url, local_path, downloaded
                     FROM news_images
@@ -549,13 +563,21 @@ class NewsTelegramBot:
                     ORDER BY id ASC
                 ''', (news_dict['id'],))
 
-                news_dict['images'] = [
+                # Объединяем изображения из БД и из news_images таблицы
+                db_images = news_dict.get('images', [])
+                table_images = [
                     {
                         'url': img['image_url'],
                         'local_path': img['local_path'],
                         'downloaded': img['downloaded']
                     } for img in images_cursor.fetchall()
                 ]
+                
+                # Если есть изображения в таблице, используем их, иначе используем из БД
+                if table_images:
+                    news_dict['images'] = [img['url'] for img in table_images if img['url']]
+                else:
+                    news_dict['images'] = db_images
 
                 # Получение источников проверки фактов
                 sources_cursor = conn.execute('''
@@ -596,6 +618,17 @@ class NewsTelegramBot:
             # Маппинг полей БД к ожидаемым названиям
             if 'published_date' in news_dict:
                 news_dict['published'] = news_dict['published_date']
+            
+            # Обработка медиа из БД
+            if 'images' in news_dict and news_dict['images']:
+                news_dict['images'] = news_dict['images'].split(',') if news_dict['images'] else []
+            else:
+                news_dict['images'] = []
+                
+            if 'videos' in news_dict and news_dict['videos']:
+                news_dict['videos'] = news_dict['videos'].split(',') if news_dict['videos'] else []
+            else:
+                news_dict['videos'] = []
             
             # Получение изображений для новости
             images_cursor = conn.execute('''

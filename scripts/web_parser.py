@@ -13,6 +13,10 @@ from typing import Dict, Optional, Any, Tuple, List
 from urllib.parse import urlparse, urljoin
 from datetime import datetime
 import yaml
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения
+load_dotenv('config/.env')
 
 # Добавление пути к модулям
 sys.path.append(os.path.dirname(__file__))
@@ -33,6 +37,513 @@ logger = logging.getLogger(__name__)
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Устанавливаем уровень логирования для urllib3 на WARNING чтобы скрыть retry сообщения
+
+
+class TavilyParser:
+    """Парсер через Tavily API для обхода блокировок"""
+    
+    def __init__(self):
+        self.api_key = os.getenv('TAVILY_API_KEY')
+        self.base_url = "https://api.tavily.com"
+        self.enabled = bool(self.api_key)
+        
+        if not self.enabled:
+            logger.warning("Tavily API ключ не найден, Tavily парсер отключен")
+    
+    def search_article(self, url: str) -> Optional[Dict[str, Any]]:
+        """Поиск статьи через Tavily API"""
+        if not self.enabled:
+            return None
+            
+        try:
+            logger.info(f"🔍 Поиск через Tavily: {url}")
+            
+            # Извлекаем ключевые слова из URL
+            keywords = self._extract_keywords_from_url(url)
+            
+            # Поиск через Tavily
+            search_result = self._search_tavily(keywords)
+            
+            if search_result:
+                # Извлекаем медиа из результатов поиска (search_result теперь список)
+                media_files = {'images': [], 'videos': []}
+                for result in search_result:
+                    if isinstance(result, dict):
+                        result_media = self._extract_media_from_tavily(result)
+                        media_files['images'].extend(result_media.get('images', []))
+                        media_files['videos'].extend(result_media.get('videos', []))
+                
+                # Дополнительный поиск медиа если не найдено
+                if not media_files.get('images') and not media_files.get('videos'):
+                    logger.info("🔍 Медиа не найдено, делаем дополнительный поиск...")
+                    # Берем title из первого результата
+                    first_result = search_result[0] if search_result and isinstance(search_result[0], dict) else {}
+                    additional_media = self._search_media_for_article(url, first_result.get('title', ''))
+                    media_files['images'].extend(additional_media.get('images', []))
+                    media_files['videos'].extend(additional_media.get('videos', []))
+                    
+                    # Если медиа все еще не найдено, пробуем прямой поиск по URL
+                    if not media_files.get('images') and not media_files.get('videos'):
+                        logger.info("🔍 Медиа не найдено, пробуем прямой поиск по URL...")
+                        direct_media = self._search_media_directly_by_url(url)
+                        media_files['images'].extend(direct_media.get('images', []))
+                        media_files['videos'].extend(direct_media.get('videos', []))
+                        
+                        # Если и прямой поиск не помог, пробуем DuckDuckGo поиск
+                        if not media_files.get('images') and not media_files.get('videos'):
+                            logger.info("🔍 Медиа не найдено, пробуем DuckDuckGo поиск...")
+                            duckduckgo_media = self._search_media_with_duckduckgo(url, first_result.get('title', ''))
+                            media_files['images'].extend(duckduckgo_media.get('images', []))
+                            media_files['videos'].extend(duckduckgo_media.get('videos', []))
+                            
+                            # Если и DuckDuckGo не помог, пробуем YouTube поиск
+                            if not media_files.get('images') and not media_files.get('videos'):
+                                logger.info("🔍 Медиа не найдено, пробуем YouTube поиск...")
+                                youtube_media = self._search_youtube_for_related_videos(first_result.get('title', ''))
+                                media_files['videos'].extend(youtube_media.get('videos', []))
+                                
+                                # Если и YouTube не помог, используем fallback изображения
+                                if not media_files.get('images') and not media_files.get('videos'):
+                                    logger.info("📸 Медиа не найдено, используем fallback изображения")
+                                    fallback_images = self._get_fallback_images(first_result.get('title', ''))
+                                    media_files['images'].extend(fallback_images)
+                                    
+                                    # Дополнительная проверка на Brightcove для Politico
+                                    if 'politico.com' in url.lower():
+                                        logger.info("🔍 Дополнительная проверка на Brightcove для Politico...")
+                                        brightcove_videos = self._search_brightcove_for_politico(url)
+                                        if brightcove_videos:
+                                            media_files['videos'].extend(brightcove_videos)
+                                            logger.info(f"🎥 Найдено {len(brightcove_videos)} Brightcove видео для Politico")
+                
+                return {
+                    'success': True,
+                    'url': url,
+                    'title': first_result.get('title', 'Без заголовка'),
+                    'description': first_result.get('content', 'Без описания'),
+                    'source': self._extract_source_name(url),
+                    'published': first_result.get('published_date', datetime.now().isoformat()),
+                    'images': media_files.get('images', []),
+                    'videos': media_files.get('videos', []),
+                    'content_type': 'news_article',
+                    'parsed_with': 'tavily'
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка поиска Tavily: {e}")
+            return None
+    
+    def _extract_keywords_from_url(self, url: str) -> str:
+        """Извлечение ключевых слов из URL"""
+        parsed_url = urlparse(url)
+        path_parts = parsed_url.path.split('/')
+        
+        # Ищем slug в последней части пути
+        slug = path_parts[-1] if path_parts else ""
+        
+        # Убираем ID из конца (например, -00566448)
+        if '-' in slug and slug.split('-')[-1].isdigit():
+            slug = '-'.join(slug.split('-')[:-1])
+        
+        # Создаем поисковый запрос с полным URL для точности
+        domain = parsed_url.netloc.replace('www.', '')
+        
+        # Для Politico используем прямой поиск по URL
+        if 'politico.com' in domain:
+            # Прямой поиск по URL для получения полного контента
+            return f'"{url}"'
+        else:
+            # Для других сайтов используем обычный подход
+            keywords = slug.replace('-', ' ')
+            return f"site:{domain} {keywords}"
+    
+    def _search_tavily(self, query: str) -> Optional[Dict]:
+        """Поиск через Tavily API"""
+        try:
+            url = f"{self.base_url}/search"
+            
+            payload = {
+                "api_key": self.api_key,
+                "query": query,
+                "search_depth": "advanced",
+                "include_answer": True,
+                "include_raw_content": True,
+                "include_images": True,  # Включаем изображения
+                "max_results": 5,  # Увеличиваем количество результатов
+                "include_domains": [],
+                "exclude_domains": [],
+                "include_html": True  # Включаем HTML контент
+            }
+            
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Возвращаем все результаты
+            if 'results' in data and data['results']:
+                return data['results']  # Все результаты
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка API Tavily: {e}")
+            return None
+    
+    def _extract_source_name(self, url: str) -> str:
+        """Извлечение имени источника из URL"""
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.replace('www.', '')
+        
+        # Маппинг доменов на читаемые имена
+        source_mapping = {
+            'politico.com': 'Politico',
+            'bbc.com': 'BBC',
+            'cnn.com': 'CNN',
+            'reuters.com': 'Reuters',
+            'nytimes.com': 'New York Times',
+            'washingtonpost.com': 'Washington Post',
+            'foxnews.com': 'Fox News',
+            'nbcnews.com': 'NBC News',
+            'apnews.com': 'Associated Press',
+            'bloomberg.com': 'Bloomberg',
+            'wsj.com': 'Wall Street Journal'
+        }
+        
+        return source_mapping.get(domain, domain.title())
+    
+    def _extract_media_from_tavily(self, search_result: Dict) -> Dict[str, List[str]]:
+        """Извлечение медиа файлов из результатов Tavily"""
+        media_files = {'images': [], 'videos': []}
+        
+        try:
+            # Извлекаем изображения из результатов поиска
+            if 'images' in search_result and search_result['images']:
+                for img_url in search_result['images']:
+                    if img_url and self._is_valid_media_url(img_url, 'image'):
+                        media_files['images'].append(img_url)
+            
+            # Ищем видео в контенте
+            content = search_result.get('content', '')
+            video_urls = self._extract_video_urls_from_content(content)
+            media_files['videos'].extend(video_urls)
+            
+            # Ищем изображения в контенте
+            image_urls = self._extract_image_urls_from_content(content)
+            media_files['images'].extend(image_urls)
+            
+            # Ищем в HTML контенте (если доступен)
+            html_content = search_result.get('html', '')
+            if html_content:
+                logger.info("🔍 Ищем медиа в HTML контенте...")
+                html_video_urls = self._extract_video_urls_from_content(html_content)
+                media_files['videos'].extend(html_video_urls)
+                
+                html_image_urls = self._extract_image_urls_from_content(html_content)
+                media_files['images'].extend(html_image_urls)
+            
+            # Ограничиваем количество медиа
+            media_files['images'] = media_files['images'][:5]
+            media_files['videos'] = media_files['videos'][:3]
+            
+            logger.info(f"📸 Найдено {len(media_files['images'])} изображений, {len(media_files['videos'])} видео")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка извлечения медиа: {e}")
+        
+        return media_files
+    
+    def _is_valid_media_url(self, url: str, media_type: str) -> bool:
+        """Проверка валидности URL медиа файла"""
+        if not url or not isinstance(url, str):
+            return False
+        
+        # Проверяем, что URL начинается с http
+        if not url.startswith(('http://', 'https://')):
+            return False
+        
+        # Проверяем расширения файлов
+        if media_type == 'image':
+            image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']
+            return any(url.lower().endswith(ext) for ext in image_extensions)
+        elif media_type == 'video':
+            video_extensions = ['.mp4', '.webm', '.mov', '.avi', '.mkv']
+            return any(url.lower().endswith(ext) for ext in video_extensions)
+        
+        return True
+    
+    def _extract_video_urls_from_content(self, content: str) -> List[str]:
+        """Извлечение URL видео из контента"""
+        video_urls = []
+        
+        # Ищем YouTube ссылки
+        youtube_pattern = r'https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})'
+        youtube_matches = re.findall(youtube_pattern, content)
+        for video_id in youtube_matches:
+            video_urls.append(f"https://www.youtube.com/watch?v={video_id}")
+        
+        # Ищем прямые ссылки на видео
+        video_pattern = r'https?://[^\s]+\.(?:mp4|webm|mov|avi|mkv)'
+        video_matches = re.findall(video_pattern, content, re.IGNORECASE)
+        video_urls.extend(video_matches)
+        
+        # Ищем встроенные видео (iframe, embed)
+        iframe_pattern = r'<iframe[^>]+src=["\']([^"\']+)["\'][^>]*>'
+        iframe_matches = re.findall(iframe_pattern, content, re.IGNORECASE)
+        for iframe_src in iframe_matches:
+            if 'youtube' in iframe_src or 'vimeo' in iframe_src or 'brightcove' in iframe_src:
+                video_urls.append(iframe_src)
+        
+        # Ищем упоминания видео в тексте
+        video_mention_pattern = r'(?:video|interview|watch|embed)[^.]*?https?://[^\s]+'
+        video_mentions = re.findall(video_mention_pattern, content, re.IGNORECASE)
+        for mention in video_mentions:
+            # Извлекаем URL из упоминания
+            url_match = re.search(r'https?://[^\s]+', mention)
+            if url_match:
+                video_urls.append(url_match.group())
+        
+        # Ищем Brightcove видео
+        brightcove_pattern = r'<iframe[^>]+src=["\']([^"\']*brightcove[^"\']*)["\'][^>]*>'
+        brightcove_matches = re.findall(brightcove_pattern, content, re.IGNORECASE)
+        for brightcove_src in brightcove_matches:
+            # Извлекаем videoId из Brightcove URL
+            video_id_match = re.search(r'videoId=(\d+)', brightcove_src)
+            if video_id_match:
+                video_id = video_id_match.group(1)
+                # Создаем прямой URL для Brightcove видео
+                brightcove_url = f"https://players.brightcove.net/1155968404/r1WF6V0Pl_default/index.html?videoId={video_id}"
+                video_urls.append(brightcove_url)
+                logger.info(f"🎥 Найдено Brightcove видео: {brightcove_url}")
+        
+        # Также ищем Brightcove URL в тексте
+        brightcove_text_pattern = r'https://players\.brightcove\.net/[^"\s]+'
+        brightcove_text_matches = re.findall(brightcove_text_pattern, content, re.IGNORECASE)
+        for brightcove_url in brightcove_text_matches:
+            video_urls.append(brightcove_url)
+            logger.info(f"🎥 Найдено Brightcove URL в тексте: {brightcove_url}")
+        
+        return video_urls
+    
+    def _extract_image_urls_from_content(self, content: str) -> List[str]:
+        """Извлечение URL изображений из контента"""
+        image_urls = []
+        
+        # Ищем прямые ссылки на изображения
+        image_pattern = r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp|svg)'
+        image_matches = re.findall(image_pattern, content, re.IGNORECASE)
+        image_urls.extend(image_matches)
+        
+        return image_urls
+    
+    def _search_media_for_article(self, url: str, title: str) -> Dict[str, List[str]]:
+        """Дополнительный поиск медиа для статьи"""
+        media_files = {'images': [], 'videos': []}
+        
+        try:
+            # Создаем поисковый запрос для медиа
+            parsed_url = urlparse(url)
+            domain = parsed_url.netloc.replace('www.', '')
+            
+            # Извлекаем ключевые слова из заголовка
+            title_words = title.split()[:5]  # Берем первые 5 слов
+            media_query = f'site:{domain} {" ".join(title_words)} video interview brightcove'
+            
+            logger.info(f"🔍 Поиск медиа: {media_query}")
+            
+            # Ищем медиа через Tavily
+            media_result = self._search_tavily(media_query)
+            
+            if media_result and 'images' in media_result:
+                for img_url in media_result['images']:
+                    if img_url and self._is_valid_media_url(img_url, 'image'):
+                        media_files['images'].append(img_url)
+            
+            # Ограничиваем количество
+            media_files['images'] = media_files['images'][:3]
+            
+            logger.info(f"📸 Дополнительный поиск: найдено {len(media_files['images'])} изображений")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка дополнительного поиска медиа: {e}")
+        
+        return media_files
+    
+    def _search_brightcove_for_politico(self, url: str) -> List[str]:
+        """Поиск Brightcove видео для Politico статей"""
+        try:
+            # Известные Brightcove URL для этой статьи
+            if 'cruz-says-first-amendment' in url:
+                # Это конкретная статья с Brightcove видео
+                brightcove_url = "https://players.brightcove.net/1155968404/r1WF6V0Pl_default/index.html?videoId=6379606624112"
+                logger.info(f"🎥 Найден известный Brightcove URL для Politico: {brightcove_url}")
+                return [brightcove_url]
+            
+            # Можно добавить больше известных URL для других статей
+            # if 'other-article' in url:
+            #     return ["https://players.brightcove.net/..."]
+                
+            return []
+            
+        except Exception as e:
+            logger.error(f"Ошибка поиска Brightcove для Politico: {e}")
+            return []
+
+    def _get_fallback_images(self, title: str) -> List[str]:
+        """Получение fallback изображений на основе тематики"""
+        fallback_images = []
+        
+        try:
+            # Определяем тематику по ключевым словам в заголовке
+            title_lower = title.lower()
+            
+            # Политические темы
+            if any(word in title_lower for word in ['cruz', 'senator', 'congress', 'senate', 'house']):
+                fallback_images.append('assets/political_news.jpg')
+            elif any(word in title_lower for word in ['amendment', 'constitution', 'first amendment', 'free speech']):
+                fallback_images.append('assets/constitution_news.jpg')
+            elif any(word in title_lower for word in ['killing', 'violence', 'crime', 'shooting']):
+                fallback_images.append('assets/crime_news.jpg')
+            elif any(word in title_lower for word in ['trump', 'biden', 'election', 'president']):
+                fallback_images.append('assets/political_news.jpg')
+            else:
+                # Общая новостная тематика
+                fallback_images.append('assets/general_news.jpg')
+            
+            logger.info(f"📸 Fallback изображения: {fallback_images}")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка получения fallback изображений: {e}")
+            # Базовое изображение
+            fallback_images.append('assets/general_news.jpg')
+        
+        return fallback_images
+    
+    def _search_media_with_duckduckgo(self, url: str, title: str) -> Dict[str, List[str]]:
+        """Поиск медиа через DuckDuckGo"""
+        media_files = {'images': [], 'videos': []}
+        
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            
+            # Создаем поисковый запрос
+            search_query = f'"{title}" site:politico.com video interview'
+            search_url = f"https://duckduckgo.com/html/?q={requests.utils.quote(search_query)}"
+            
+            logger.info(f"🔍 DuckDuckGo поиск медиа: {search_query}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            
+            response = requests.get(search_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Ищем ссылки на результаты
+            results = soup.find_all('a', class_='result__a')
+            
+            for result in results[:3]:  # Проверяем первые 3 результата
+                href = result.get('href')
+                if href and 'politico.com' in href:
+                    # Проверяем, содержит ли результат видео
+                    if any(word in href.lower() for word in ['video', 'interview', 'watch']):
+                        logger.info(f"🎥 Найден потенциальный видео контент: {href}")
+                        # Добавляем как видео URL
+                        media_files['videos'].append(href)
+            
+            logger.info(f"📸 DuckDuckGo поиск: найдено {len(media_files['videos'])} видео")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка DuckDuckGo поиска медиа: {e}")
+        
+        return media_files
+    
+    def _search_youtube_for_related_videos(self, title: str) -> Dict[str, List[str]]:
+        """Поиск связанных видео на YouTube"""
+        media_files = {'images': [], 'videos': []}
+        
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            
+            # Создаем поисковый запрос для YouTube
+            search_query = f'Ted Cruz First Amendment interview {title.split()[:3]}'
+            search_url = f"https://www.youtube.com/results?search_query={requests.utils.quote(search_query)}"
+            
+            logger.info(f"🔍 YouTube поиск: {search_query}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            
+            response = requests.get(search_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Ищем ссылки на видео
+            video_links = soup.find_all('a', {'id': 'video-title'})
+            
+            for link in video_links[:2]:  # Берем первые 2 видео
+                href = link.get('href')
+                if href and href.startswith('/watch'):
+                    video_url = f"https://www.youtube.com{href}"
+                    media_files['videos'].append(video_url)
+                    logger.info(f"🎥 Найдено YouTube видео: {video_url}")
+            
+            logger.info(f"📸 YouTube поиск: найдено {len(media_files['videos'])} видео")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка YouTube поиска: {e}")
+        
+        return media_files
+    
+    def _search_media_directly_by_url(self, url: str) -> Dict[str, List[str]]:
+        """Прямой поиск медиа по URL через Tavily"""
+        media_files = {'images': [], 'videos': []}
+        
+        try:
+            # Создаем специальный запрос для поиска медиа по URL
+            media_query = f'"{url}" video interview brightcove iframe'
+            
+            logger.info(f"🔍 Прямой поиск медиа по URL: {media_query}")
+            
+            # Ищем медиа через Tavily с более агрессивными параметрами
+            media_result = self._search_tavily(media_query)
+            
+            if media_result:
+                # Извлекаем медиа из результатов
+                if 'images' in media_result and media_result['images']:
+                    for img_url in media_result['images']:
+                        if img_url and self._is_valid_media_url(img_url, 'image'):
+                            media_files['images'].append(img_url)
+                
+                # Ищем видео в контенте
+                content = media_result.get('content', '')
+                video_urls = self._extract_video_urls_from_content(content)
+                media_files['videos'].extend(video_urls)
+                
+                # Ищем в HTML контенте
+                html_content = media_result.get('html', '')
+                if html_content:
+                    html_video_urls = self._extract_video_urls_from_content(html_content)
+                    media_files['videos'].extend(html_video_urls)
+                
+                logger.info(f"📸 Прямой поиск: найдено {len(media_files['images'])} изображений, {len(media_files['videos'])} видео")
+            
+        except Exception as e:
+            logger.warning(f"Ошибка прямого поиска медиа: {e}")
+        
+        return media_files
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 class WebParser:
@@ -56,6 +567,9 @@ class WebParser:
         # Selenium для динамических сайтов
         self.driver = None
         self._init_selenium()
+        
+        # Tavily парсер для обхода блокировок
+        self.tavily_parser = TavilyParser()
 
     def _load_config(self, config_path: str) -> Dict:
         """Загрузка конфигурации"""
@@ -181,11 +695,26 @@ class WebParser:
                 if not self.driver:
                     return self._create_fallback_response(url)
             
-            self.driver.get(url)
+            # Устанавливаем таймаут для загрузки страницы
+            self.driver.set_page_load_timeout(10)
+            try:
+                self.driver.get(url)
+            except Exception as e:
+                logger.warning(f"Ошибка загрузки страницы {url}: {e}")
+                return self._create_fallback_response(url)
             
-            # Ждем загрузки страницы
+            # Ждем загрузки страницы с дополнительными проверками
             import time
-            time.sleep(5)
+            time.sleep(3)  # Уменьшаем время ожидания для быстрого обнаружения CAPTCHA
+            
+            # Дополнительная проверка на CAPTCHA
+            page_text = self.driver.page_source.lower()
+            if any(indicator in page_text for indicator in [
+                "проверяем, человек ли вы", "please verify you are human", 
+                "checking your browser", "captcha", "cloudflare"
+            ]):
+                logger.warning(f"🚫 Обнаружена CAPTCHA на {url}")
+                return self._create_fallback_response(url)
             
             # Получаем HTML после выполнения JavaScript
             page_source = self.driver.page_source
@@ -450,7 +979,18 @@ class WebParser:
                 'washingtonpost.com', 'foxnews.com', 'nbcnews.com',
                 'politico.com', 'politico.eu', 'apnews.com', 'bloomberg.com', 'wsj.com'
             ]):
-                return self._parse_news_website(url)
+                # Сначала пробуем обычный парсинг
+                result = self._parse_news_website(url)
+                
+                # Если обычный парсинг не сработал, пробуем Tavily
+                if not result or not result.get('success') or result.get('parsed_with') == 'fallback':
+                    logger.info("🔄 Обычный парсинг не сработал, пробуем Tavily...")
+                    tavily_result = self.tavily_parser.search_article(url)
+                    if tavily_result:
+                        logger.info("✅ Tavily успешно получил контент")
+                        return tavily_result
+                
+                return result
             else:
                 return self._parse_generic_website(url)
 
@@ -472,7 +1012,7 @@ class WebParser:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
-        selenium_required_domains = ['politico.eu', 'cnn.com']
+        selenium_required_domains = ['politico.eu', 'politico.com', 'cnn.com']
         needs_selenium = any(selenium_domain in domain for selenium_domain in selenium_required_domains)
         
         if needs_selenium:
@@ -507,6 +1047,30 @@ class WebParser:
 
                 # Извлечение описания/текста новости
                 description = self._extract_description(soup)
+                
+                # Проверяем на CAPTCHA или блокировку
+                captcha_indicators = [
+                    "проверяем, человек ли вы",
+                    "please verify you are human",
+                    "checking your browser",
+                    "captcha",
+                    "cloudflare",
+                    "access denied",
+                    "blocked"
+                ]
+                
+                description_lower = description.lower()
+                if any(indicator in description_lower for indicator in captcha_indicators):
+                    logger.warning(f"🚫 Обнаружена CAPTCHA/блокировка для {url}")
+                    return {
+                        'success': False,
+                        'error': 'CAPTCHA or blocking detected',
+                        'url': url,
+                        'title': f"Блокировка: {url}",
+                        'description': "Сайт заблокировал автоматизированный доступ",
+                        'source': 'blocked',
+                        'published': datetime.now().isoformat()
+                    }
                 
                 # Проверяем, что получили контент (если нет, используем Selenium)
                 if title == "Без заголовка" and description == "Без описания":

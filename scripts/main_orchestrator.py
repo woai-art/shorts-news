@@ -469,7 +469,26 @@ class ShortsNewsOrchestrator:
         elif len(summary) > 2000:
             issues.append("Текст новости слишком длинный")
         
-        # 3. Проверка на заглушки LLM
+        # 3. Проверка на CAPTCHA и блокировку
+        captcha_indicators = [
+            "проверяем, человек ли вы",
+            "please verify you are human",
+            "checking your browser",
+            "captcha",
+            "cloudflare",
+            "access denied",
+            "blocked",
+            "verification required",
+            "human verification"
+        ]
+        
+        summary_lower = summary.lower()
+        for indicator in captcha_indicators:
+            if indicator in summary_lower:
+                issues.append(f"Обнаружена CAPTCHA/блокировка: '{indicator}'")
+                break
+        
+        # 4. Проверка на заглушки LLM
         llm_placeholders = [
             "please provide the news article",
             "i need the text of the article",
@@ -481,7 +500,6 @@ class ShortsNewsOrchestrator:
             "please provide more details"
         ]
         
-        summary_lower = summary.lower()
         for placeholder in llm_placeholders:
             if placeholder in summary_lower:
                 issues.append(f"Обнаружена заглушка LLM: '{placeholder}'")
