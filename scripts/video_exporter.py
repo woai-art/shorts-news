@@ -139,7 +139,13 @@ class VideoExporter:
             suffix = Path(media_path).suffix.lower()
             try:
                 if suffix in {'.mp4', '.mov', '.mkv', '.avi', '.webm'}:
-                    video_clip = VideoFileClip(media_path).without_audio()
+                    # Поддержка старта с заданного времени (секунды) если передано через news_data
+                    start_offset = float(getattr(self, 'header_video_start_seconds', 0) or 0)
+                    base_clip = VideoFileClip(media_path).without_audio()
+                    if start_offset > 0 and start_offset < max(0.1, getattr(base_clip, 'duration', 0)):
+                        video_clip = base_clip.subclipped(start_offset)
+                    else:
+                        video_clip = base_clip
                     if video_clip.duration > self.duration:
                         video_clip = video_clip.with_duration(self.duration)
                     
@@ -532,6 +538,37 @@ class VideoExporter:
         date_y = (h - date_h) // 2  # Центрируем по вертикали
         draw.text((padding, date_y), left_text, font=font, fill=(255, 255, 255))
         
+        # Центральная подпись источника (для улучшения читаемости бренда)
+        try:
+            center_font = self._load_font(self.footer_font_path, 30)
+            center_text = source_name.upper()
+
+            # Ограничиваем ширину центральной подписи (оставляя поля слева/справа под дату и логотип)
+            max_center_width = int(w * 0.5)
+            text_w, text_h = draw.textbbox((0, 0), center_text, font=center_font)[2:4]
+
+            # Функция усечения текста с троеточием, чтобы влезал
+            def _fit_text(text: str) -> str:
+                if draw.textbbox((0, 0), text, font=center_font)[2] <= max_center_width:
+                    return text
+                ellipsis = '…'
+                for cut in range(len(text) - 1, 0, -1):
+                    candidate = text[:cut].rstrip() + ellipsis
+                    if draw.textbbox((0, 0), candidate, font=center_font)[2] <= max_center_width:
+                        return candidate
+                return ellipsis
+
+            center_text = _fit_text(center_text)
+
+            # Лёгкая тень для контраста
+            cx = (w - draw.textbbox((0, 0), center_text, font=center_font)[2]) // 2
+            cy = (h - draw.textbbox((0, 0), center_text, font=center_font)[3]) // 2
+            shadow_offset = 2
+            draw.text((cx + shadow_offset, cy + shadow_offset), center_text, font=center_font, fill=(0, 0, 0))
+            draw.text((cx, cy), center_text, font=center_font, fill=(230, 230, 230))
+        except Exception as _e:
+            pass
+
         # Проверяем, является ли источником Twitter/X для особой обработки
         is_twitter = any(domain in url.lower() for domain in ['twitter.com', 'x.com'])
         
@@ -654,6 +691,22 @@ class VideoExporter:
                 # Позиционируем логотип справа
                 logo_x = w - new_logo_w - padding
                 logo_y = (h - new_logo_h) // 2
+
+                # Подложка с мягкими углами для повышения контраста логотипа
+                try:
+                    bg_pad = max(4, int(min(new_logo_w, new_logo_h) * 0.15))
+                    overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+                    from PIL import ImageDraw as _ImageDraw
+                    odraw = _ImageDraw.Draw(overlay)
+                    rect = (logo_x - bg_pad, logo_y - bg_pad, logo_x + new_logo_w + bg_pad, logo_y + new_logo_h + bg_pad)
+                    odraw.rounded_rectangle(rect, radius=int(bg_pad*0.8), fill=(255, 255, 255, 42))  # светлая полупрозрачная
+                    # Небольшая тень
+                    odraw.rounded_rectangle((rect[0]+2, rect[1]+2, rect[2]+2, rect[3]+2), radius=int(bg_pad*0.8), outline=None, fill=(0,0,0,10))
+                    img_alpha = img.convert('RGBA')
+                    img_alpha.alpha_composite(overlay)
+                    img.paste(img_alpha.convert('RGB'))
+                except Exception as _e:
+                    pass
                 
                 # Создаём маску для правильного наложения PNG с прозрачностью
                 if logo_img.mode == 'RGBA':

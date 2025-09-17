@@ -329,6 +329,45 @@ class TavilyParser:
             video_urls.append(brightcove_url)
             logger.info(f"🎥 Найдено Brightcove URL в тексте: {brightcove_url}")
         
+        # Ищем AP News видео
+        ap_video_pattern = r'<video[^>]+src=["\']([^"\']+)["\'][^>]*>'
+        ap_video_matches = re.findall(ap_video_pattern, content, re.IGNORECASE)
+        for video_src in ap_video_matches:
+            if 'apnews.com' in video_src or 'ap.org' in video_src:
+                video_urls.append(video_src)
+                logger.info(f"🎥 Найдено AP News видео: {video_src}")
+        
+        # Ищем AP News видео в data-атрибутах
+        ap_data_pattern = r'data-video-url=["\']([^"\']+)["\']'
+        ap_data_matches = re.findall(ap_data_pattern, content, re.IGNORECASE)
+        for video_url in ap_data_matches:
+            if video_url.startswith('http'):
+                video_urls.append(video_url)
+                logger.info(f"🎥 Найдено AP News видео в data: {video_url}")
+        
+        # Ищем AP News видео в JSON данных
+        ap_json_pattern = r'"videoUrl":\s*"([^"]+)"'
+        ap_json_matches = re.findall(ap_json_pattern, content, re.IGNORECASE)
+        for video_url in ap_json_matches:
+            if video_url.startswith('http'):
+                video_urls.append(video_url)
+                logger.info(f"🎥 Найдено AP News видео в JSON: {video_url}")
+        
+        # Ищем JW Player видео (используется AP News)
+        jwplayer_pattern = r'https://cdn\.jwplayer\.com/videos/[^"\s<>]+\.mp4'
+        jwplayer_matches = re.findall(jwplayer_pattern, content, re.IGNORECASE)
+        for video_url in jwplayer_matches:
+            video_urls.append(video_url)
+            logger.info(f"🎥 Найдено JW Player видео: {video_url}")
+        
+        # Ищем другие CDN видео
+        cdn_pattern = r'https://[^"\s<>]*\.(?:mp4|webm|mov)(?:\?[^"\s<>]*)?'
+        cdn_matches = re.findall(cdn_pattern, content, re.IGNORECASE)
+        for video_url in cdn_matches:
+            if video_url not in video_urls:  # Избегаем дублирования
+                video_urls.append(video_url)
+                logger.info(f"🎥 Найдено CDN видео: {video_url}")
+        
         return video_urls
     
     def _extract_image_urls_from_content(self, content: str) -> List[str]:
@@ -974,10 +1013,30 @@ class WebParser:
                 return self._parse_instagram(url)
             elif 't.me' in domain or 'telegram.org' in domain:
                 return self._parse_telegram(url)
+            elif 'apnews.com' in domain or 'ap.org' in domain:
+                # Специальная обработка для AP News с прямым парсингом
+                logger.info("🌐 Используем прямой парсинг для AP News")
+                result = self._parse_apnews_direct(url)
+                if result and result.get('success'):
+                    return result
+                
+                # Если прямой парсинг не сработал, пробуем обычный
+                logger.info("🔄 Прямой парсинг не сработал, пробуем обычный...")
+                result = self._parse_news_website(url)
+                
+                # Если обычный парсинг не сработал, пробуем Tavily
+                if not result or not result.get('success') or result.get('parsed_with') == 'fallback':
+                    logger.info("🔄 Обычный парсинг не сработал, пробуем Tavily...")
+                    tavily_result = self.tavily_parser.search_article(url)
+                    if tavily_result:
+                        logger.info("✅ Tavily успешно получил контент")
+                        return tavily_result
+                
+                return result
             elif any(news_domain in domain for news_domain in [
                 'bbc.com', 'cnn.com', 'reuters.com', 'nytimes.com',
                 'washingtonpost.com', 'foxnews.com', 'nbcnews.com',
-                'politico.com', 'politico.eu', 'apnews.com', 'bloomberg.com', 'wsj.com'
+                'politico.com', 'politico.eu', 'bloomberg.com', 'wsj.com'
             ]):
                 # Сначала пробуем обычный парсинг
                 result = self._parse_news_website(url)
@@ -1012,7 +1071,7 @@ class WebParser:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
-        selenium_required_domains = ['politico.eu', 'politico.com', 'cnn.com']
+        selenium_required_domains = ['politico.eu', 'politico.com', 'cnn.com', 'apnews.com', 'ap.org']
         needs_selenium = any(selenium_domain in domain for selenium_domain in selenium_required_domains)
         
         if needs_selenium:
@@ -1860,6 +1919,98 @@ class WebParser:
                 return title_text.split(' - ')[-1][:50]
 
         return domain
+
+    def _parse_apnews_direct(self, url: str) -> Dict:
+        """Прямой парсинг AP News через HTTP запрос"""
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            import re
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+            
+            logger.info(f"🌐 Прямой HTTP запрос к AP News: {url}")
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            # Декодируем контент правильно
+            content = response.text
+            if not content or len(content) < 1000 or not ('<html' in content.lower() or '<!doctype' in content.lower()):
+                # Контент может быть сжат (Brotli, gzip)
+                try:
+                    import brotli
+                    if response.headers.get('content-encoding') == 'br':
+                        content = brotli.decompress(response.content).decode('utf-8', errors='ignore')
+                    else:
+                        content = response.content.decode('utf-8', errors='ignore')
+                except ImportError:
+                    content = response.content.decode('utf-8', errors='ignore')
+            
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Извлекаем заголовок
+            title = soup.find('meta', property='og:title')
+            title = title.get('content') if title else soup.find('title')
+            title = title.get_text() if hasattr(title, 'get_text') else str(title)
+            
+            # Извлекаем описание
+            description = soup.find('meta', property='og:description')
+            description = description.get('content') if description else ''
+            
+            # Извлекаем изображения
+            images = []
+            og_image = soup.find('meta', property='og:image')
+            if og_image and og_image.get('content'):
+                images.append(og_image['content'])
+            
+            # Извлекаем видео (JW Player)
+            videos = []
+            text = content
+            
+            # Ищем JW Player видео
+            jwplayer_pattern = r'https://cdn\.jwplayer\.com/videos/[^"\s<>]+\.mp4'
+            jwplayer_matches = re.findall(jwplayer_pattern, text, re.IGNORECASE)
+            for video_url in jwplayer_matches:
+                videos.append(video_url)
+                logger.info(f"🎥 Найдено JW Player видео: {video_url}")
+            
+            # Ищем другие CDN видео
+            cdn_pattern = r'https://[^"\s<>]*\.(?:mp4|webm|mov)(?:\?[^"\s<>]*)?'
+            cdn_matches = re.findall(cdn_pattern, text, re.IGNORECASE)
+            for video_url in cdn_matches:
+                if video_url not in videos:  # Избегаем дублирования
+                    videos.append(video_url)
+                    logger.info(f"🎥 Найдено CDN видео: {video_url}")
+            
+            # Извлекаем дату
+            date = soup.find('meta', property='article:published_time')
+            date = date.get('content') if date else ''
+            
+            result = {
+                'success': True,
+                'title': title,
+                'description': description,
+                'source': 'Associated Press',
+                'url': url,
+                'images': images,
+                'videos': videos,
+                'published': date,
+                'publish_date': date
+            }
+            
+            logger.info(f"✅ AP News прямой парсинг: найдено {len(images)} изображений, {len(videos)} видео")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка прямого парсинга AP News: {e}")
+            return {'success': False, 'error': str(e)}
 
     def close(self):
         """Закрытие соединений"""

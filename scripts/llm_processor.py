@@ -465,6 +465,7 @@ class GeminiProvider(LLMProvider):
         - Clickbait style but factual
         - Start with action words or shocking facts
         - NO generic words like 'news', 'update', 'breaking'
+        - NO hashtags in title
         - Examples: 'Putin meets Trump at Alaska hotel', 'Bitcoin crashes 40% in single day', 'Ukraine captures Russian general'
 
         DESCRIPTION RULES:
@@ -528,23 +529,6 @@ class GeminiProvider(LLMProvider):
             title = (result.get('title') or '').strip()
             if not title:
                 title = (text[:70] + '...') if len(text) > 70 else text
-
-            # Добавляем хештеги к заголовку если их нет
-            if '#' not in title and result.get('tags'):
-                tags = result.get('tags', [])
-                if isinstance(tags, str):
-                    tags = [t.strip() for t in tags.split(',') if t.strip()]
-
-                if tags:
-                    title_hashtags = [f"#{tag.replace(' ', '')}" for tag in tags[:3]]
-                    title_with_hashtags = f"{title} {' '.join(title_hashtags)}"
-
-                    if len(title_with_hashtags) > 90:
-                        max_title_len = 90 - len(' '.join(title_hashtags)) - 1
-                        title = title[:max_title_len].rstrip() + "..."
-                        title = f"{title} {' '.join(title_hashtags)}"
-                    else:
-                        title = title_with_hashtags
 
             description = (result.get('description') or '').strip()
             if len(description) > 280:

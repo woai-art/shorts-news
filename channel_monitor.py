@@ -52,14 +52,16 @@ class ChannelMonitor:
         
         # Настройки извлекаются из переменных окружения или конфига
         self.monitor_channel_id = os.getenv("MONITOR_CHANNEL_ID", "-1003056499503")
-        self.bot_token = os.getenv("MONITOR_BOT_TOKEN", "YOUR_MONITOR_BOT_TOKEN_HERE")
+        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
         self.publish_channel_id = os.getenv("PUBLISH_CHANNEL_ID", "YOUR_PUBLISH_CHANNEL_ID_HERE")
         self.publish_bot_token = os.getenv("PUBLISH_BOT_TOKEN", "YOUR_PUBLISH_BOT_TOKEN_HERE")
         
-        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-        self.publish_base_url = f"https://api.telegram.org/bot{self.publish_bot_token}"
+        # Используем разные токены для разных задач
+        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"  # Для канала
+        self.publish_base_url = f"https://api.telegram.org/bot{self.publish_bot_token}"  # Для группы
 
         self.last_update_id = 0
+        self.last_group_update_id = 0
         self.processed_messages = set()
         self.config_path = 'config/config.yaml'
         
@@ -74,6 +76,29 @@ class ChannelMonitor:
         logger.info("Channel Monitor initialized")
         logger.info(f"Monitoring channel: {self.monitor_channel_id}")
         logger.info(f"Publishing to channel (for status updates): {self.publish_channel_id}")
+        
+        # Отправляем "пинг" в канал публикации при старте
+        self._send_publish_ping()
+
+    def _send_publish_ping(self):
+        """Отправляет тестовое сообщение в канал публикации при старте."""
+        if not self.publish_channel_id or not self.publish_bot_token:
+            logger.warning("⚠️ Не настроены PUBLISH_CHANNEL_ID или PUBLISH_BOT_TOKEN. Пинг не отправлен.")
+            return
+        
+        try:
+            url = f"{self.publish_base_url}/sendMessage"
+            payload = {
+                'chat_id': self.publish_channel_id,
+                'text': "✅ Monitor online. Сервисные уведомления активны."
+            }
+            response = requests.post(url, json=payload, timeout=5)
+            response.raise_for_status()
+            logger.info(f"📡 ping status={response.status_code}: {response.text[:100]}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка отправки пинга в PUBLISH_CHANNEL_ID: {e}")
+        except Exception as e:
+            logger.error(f"❌ Неизвестная ошибка при отправке пинга в PUBLISH_CHANNEL_ID: {e}")
 
     def _acquire_lock(self):
         """Получение блокировки для предотвращения множественных запусков"""
@@ -102,7 +127,7 @@ class ChannelMonitor:
                 logger.warning("⚠️ Поврежденный lock файл, удаляем...")
                 try:
                     os.remove(self.lock_file)
-                except:
+                except Exception:
                     pass
         
         # Создаем новый lock файл
@@ -158,9 +183,9 @@ class ChannelMonitor:
             logger.error(f"Error sending status: {e}")
 
     def get_updates(self):
-        """Получение обновлений из канала"""
+        """Получение обновлений из канала и группы"""
         url = f"{self.base_url}/getUpdates"
-        params = {"offset": self.last_update_id + 1, "timeout": 30, "allowed_updates": ["channel_post"]}
+        params = {"offset": self.last_update_id + 1, "timeout": 30, "allowed_updates": ["channel_post", "message"]}
         try:
             response = requests.get(url, params=params, timeout=35)
             
@@ -191,6 +216,30 @@ class ChannelMonitor:
         except Exception as e:
             logger.error(f"Unhandled error getting updates: {e}")
             time.sleep(15)
+
+    def get_group_updates(self):
+        """Получение обновлений из админ-группы через publish-бота."""
+        url = f"{self.publish_base_url}/getUpdates"
+        params = {"offset": self.last_group_update_id + 1, "timeout": 30, "allowed_updates": ["message"]}
+        try:
+            response = requests.get(url, params=params, timeout=35)
+            if response.status_code == 409:
+                # для второго бота чистим его очередь отдельно
+                try:
+                    requests.get(url, params={"offset": -1, "timeout": 1}, timeout=5)
+                except Exception:
+                    pass
+                time.sleep(5)
+                return
+            response.raise_for_status()
+            data = response.json()
+            if data.get("ok") and data.get("result"):
+                for update in data["result"]:
+                    self.last_group_update_id = update["update_id"]
+                    yield update
+        except Exception as e:
+            logger.warning(f"Group updates error: {e}")
+            time.sleep(10)
 
     def process_channel_message(self, message: dict):
         """Обработка сообщения из канала: парсинг и сохранение в БД."""
@@ -224,7 +273,7 @@ class ChannelMonitor:
                     # Переинициализируем парсер
                     try:
                         self.web_parser.close()
-                    except:
+                    except Exception:
                         pass
                     
                     self.web_parser = WebParser(self.config_path)
@@ -276,7 +325,20 @@ class ChannelMonitor:
             if news_id:
                 logger.info(f"✅ News saved to DB with ID: {news_id}")
                 self.send_status_message(f"✅ Saved to DB (ID: {news_id}): {news_data['title'][:40]}...")
-                self.processed_messages.add(message_id)
+                
+                # Проверяем, есть ли видео в новости
+                has_video = (news_data.get('videos') and len(news_data.get('videos', [])) > 0) or \
+                           (news_data.get('content') and ('video' in news_data.get('content', '').lower() or 
+                                                         'youtube.com' in news_data.get('content', '') or
+                                                         'youtu.be' in news_data.get('content', '')))
+                
+                if has_video:
+                    # Если есть видео, отправляем запрос на указание времени старта
+                    self.send_video_start_request(news_id, news_data)
+                    logger.info(f"🎬 Новость {news_id} содержит видео, ожидаем команду /startat")
+                    # НЕ добавляем в processed_messages - ждем команду
+                else:
+                    self.processed_messages.add(message_id)
             else:
                 logger.error("Failed to save news to database.")
                 self.send_status_message("❌ Error saving to DB.")
@@ -284,6 +346,114 @@ class ChannelMonitor:
         except Exception as e:
             logger.error(f"Failed to process message {message_id}: {e}", exc_info=True)
             self.send_status_message(f"❌ Error processing message: {e}")
+
+    def send_video_start_request(self, news_id: int, news_data: dict):
+        """Отправляет запрос на указание времени старта видео в группу."""
+        try:
+            # Формируем сообщение с информацией о видео
+            video_info = ""
+            if news_data.get('videos'):
+                video_info = f"\n🎥 Видео найдено: {news_data['videos'][0]}"
+            elif 'youtube.com' in news_data.get('content', '') or 'youtu.be' in news_data.get('content', ''):
+                video_info = "\n🎥 YouTube видео обнаружено в контенте"
+            
+            message = (
+                f"🎬 Новость ID {news_id} содержит видео!\n"
+                f"Заголовок: {news_data.get('title', '')[:60]}...\n"
+                f"{video_info}\n\n"
+                f"Укажите старт (в секундах) командой:\n"
+                f"`/startat {news_id} <seconds>`\n\n"
+                f"Например: `/startat {news_id} 5` — начать с 5 секунды\n"
+                f"Или `/startat {news_id} 0` — начать с начала\n\n"
+                f"После команды начнется обработка видео!"
+            )
+            
+            url = f"{self.publish_base_url}/sendMessage"
+            data = {
+                "chat_id": self.publish_channel_id,
+                "text": message,
+                "parse_mode": "Markdown",
+                "disable_notification": False
+            }
+            response = requests.post(url, json=data, timeout=10)
+            response.raise_for_status()
+            logger.info(f"✅ Запрос на время старта отправлен для новости {news_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки запроса времени старта: {e}")
+
+    def process_startat_command(self, message: dict):
+        """Обработка команды /startat из группы."""
+        try:
+            text = message.get("text", "").strip()
+            if not text.startswith("/startat"):
+                return False
+                
+            # Парсим команду: /startat <news_id> <seconds>
+            parts = text.split()
+            if len(parts) != 3:
+                return False
+                
+            try:
+                news_id = int(parts[1])
+                start_seconds = float(parts[2])
+            except ValueError:
+                return False
+                
+            if start_seconds < 0:
+                return False
+                
+            # Устанавливаем время старта в БД
+            self.telegram_bot._set_video_start_seconds(news_id, start_seconds)
+            
+            # Отправляем подтверждение
+            confirm_message = f"✅ Установлено время старта {start_seconds}с для новости {news_id}\n🚀 Запускаем обработку..."
+            url = f"{self.publish_base_url}/sendMessage"
+            data = {
+                "chat_id": self.publish_channel_id,
+                "text": confirm_message,
+                "disable_notification": False
+            }
+            requests.post(url, json=data, timeout=10)
+            
+            logger.info(f"✅ Команда /startat обработана: новость {news_id}, старт {start_seconds}с")
+            
+            # Запускаем обработку новости
+            self.process_news_with_video_offset(news_id)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки команды /startat: {e}")
+            return False
+
+    def process_news_with_video_offset(self, news_id: int):
+        """Запускает обработку новости с установленным смещением видео."""
+        try:
+            logger.info(f"🚀 Запускаем обработку новости {news_id} с установленным смещением...")
+            
+            # Импортируем и запускаем основной обработчик
+            import subprocess
+            import sys
+            
+            # Запускаем start.py для обработки одной новости
+            result = subprocess.run([
+                sys.executable, "start.py"
+            ], capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0:
+                logger.info(f"✅ Новость {news_id} успешно обработана")
+                self.send_status_message(f"✅ Новость {news_id} обработана и загружена на YouTube!")
+            else:
+                logger.error(f"❌ Ошибка обработки новости {news_id}: {result.stderr}")
+                self.send_status_message(f"❌ Ошибка обработки новости {news_id}")
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"❌ Таймаут обработки новости {news_id}")
+            self.send_status_message(f"❌ Таймаут обработки новости {news_id}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка запуска обработки новости {news_id}: {e}")
+            self.send_status_message(f"❌ Ошибка запуска обработки новости {news_id}")
 
     def cleanup(self):
         """Очистка ресурсов при завершении работы"""
@@ -322,7 +492,7 @@ class ChannelMonitor:
         """Деструктор для автоматической очистки ресурсов"""
         try:
             self.cleanup()
-        except:
+        except Exception:
             pass
 
     def run(self):
@@ -333,12 +503,28 @@ class ChannelMonitor:
 
         while True:
             try:
+                # 1) Обработка сообщений из канала (через @tubepull_bot)
                 for update in self.get_updates():
                     if "channel_post" in update:
                         message = update["channel_post"]
                         chat_id = message.get("chat", {}).get("id")
                         if str(chat_id) == str(self.monitor_channel_id):
                             self.process_channel_message(message)
+                
+                # 2) Обработка команд из группы (через @tubepush_bot)
+                for update in self.get_group_updates():
+                    if "message" in update:
+                        message = update["message"]
+                        chat_id = message.get("chat", {}).get("id")
+                        if str(chat_id) == str(self.publish_channel_id):
+                            logger.info(f"📨 Получено сообщение из группы: {message.get('text', '')[:50]}...")
+                            # Проверяем, является ли это командой /startat
+                            if self.process_startat_command(message):
+                                # Команда обработана, добавляем сообщение в processed
+                                message_id = message.get("message_id")
+                                if message_id:
+                                    self.processed_messages.add(f"group_{message_id}")
+                                    
                 time.sleep(5)  # Пауза между проверками
             except KeyboardInterrupt:
                 logger.info("Monitoring stopped by user.")

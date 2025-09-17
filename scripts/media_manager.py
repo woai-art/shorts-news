@@ -476,6 +476,10 @@ class MediaManager:
             return self._download_video_direct(video_url, news_title)
         elif 'brightcove' in video_url:
             return self._download_brightcove_video_with_ytdlp(video_url, news_title)
+        elif 'apnews.com' in video_url or 'ap.org' in video_url:
+            return self._download_apnews_video_with_ytdlp(video_url, news_title)
+        elif 'cdn.jwplayer.com' in video_url:
+            return self._download_jwplayer_video_direct(video_url, news_title)
         
         return self._download_video_direct(video_url, news_title)
     
@@ -599,6 +603,128 @@ class MediaManager:
             return None
         except Exception as e:
             logger.error(f"❌ Ошибка yt-dlp для Brightcove видео: {e}")
+            return None
+    
+    def _download_apnews_video_with_ytdlp(self, video_url: str, news_title: str) -> Optional[str]:
+        """Скачивание AP News видео через yt-dlp"""
+        try:
+            import subprocess
+            import json
+            from pathlib import Path
+            
+            # Создаем безопасное имя файла
+            safe_title = "".join(c for c in news_title if c.isalnum() or c in (' ', '-', '_')).rstrip()[:50]
+            safe_title = safe_title.replace(' ', '_')
+            
+            output_path = self.media_dir / f"{safe_title}_{hash(video_url) % 1000000}.mp4"
+            
+            # Команда yt-dlp для AP News
+            cmd = [
+                'yt-dlp',
+                '--format', 'best[ext=mp4]/best',  # Лучшее качество в mp4 или любое
+                '--output', str(output_path),
+                '--no-playlist',
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                '--referer', 'https://apnews.com/',  # AP News требует referer
+                video_url
+            ]
+            
+            logger.info(f"🔄 Пробуем yt-dlp для AP News видео: {video_url[:50]}...")
+            
+            # Запускаем yt-dlp
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if result.returncode == 0 and output_path.exists():
+                # Проверяем длительность
+                try:
+                    from moviepy import VideoFileClip
+                    with VideoFileClip(str(output_path)) as video_clip:
+                        duration = video_clip.duration
+                        if duration > self.max_video_duration:
+                            logger.warning(f"⚠️ Видео слишком длинное: {duration}с (максимум {self.max_video_duration}с)")
+                            output_path.unlink()
+                            return None
+                        
+                        logger.info(f"✅ AP News видео загружено через yt-dlp: {output_path} (длительность: {duration:.1f}с)")
+                        return str(output_path)
+                except ImportError:
+                    logger.info(f"✅ AP News видео загружено через yt-dlp: {output_path}")
+                    return str(output_path)
+            else:
+                logger.warning(f"⚠️ yt-dlp не смог загрузить AP News видео: {result.stderr}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            logger.error("❌ yt-dlp превысил время ожидания для AP News видео")
+            return None
+        except FileNotFoundError:
+            logger.warning("⚠️ yt-dlp не установлен. Установите: pip install yt-dlp")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Ошибка yt-dlp для AP News видео: {e}")
+            return None
+    
+    def _download_jwplayer_video_direct(self, video_url: str, news_title: str) -> Optional[str]:
+        """Скачивание JW Player видео напрямую"""
+        try:
+            import requests
+            from pathlib import Path
+            
+            # Создаем безопасное имя файла
+            safe_title = "".join(c for c in news_title if c.isalnum() or c in (' ', '-', '_')).rstrip()[:50]
+            safe_title = safe_title.replace(' ', '_')
+            
+            output_path = self.media_dir / f"{safe_title}_{hash(video_url) % 1000000}.mp4"
+            
+            logger.info(f"🔄 Скачиваем JW Player видео: {video_url[:50]}...")
+            
+            # Заголовки для JW Player
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Referer': 'https://apnews.com/',
+                'Accept': 'video/mp4,video/*,*/*;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive',
+            }
+            
+            # Скачиваем видео
+            response = requests.get(video_url, headers=headers, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            # Проверяем размер файла
+            content_length = response.headers.get('content-length')
+            if content_length and int(content_length) > self.max_video_size:
+                logger.warning(f"⚠️ Видео слишком большое: {int(content_length)} байт (максимум {self.max_video_size} байт)")
+                return None
+            
+            # Сохраняем файл
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            # Проверяем длительность
+            try:
+                from moviepy import VideoFileClip
+                with VideoFileClip(str(output_path)) as video_clip:
+                    duration = video_clip.duration
+                    if duration > self.max_video_duration:
+                        logger.warning(f"⚠️ Видео слишком длинное: {duration}с (максимум {self.max_video_duration}с)")
+                        output_path.unlink()
+                        return None
+                    
+                    logger.info(f"✅ JW Player видео загружено: {output_path} (длительность: {duration:.1f}с)")
+                    return str(output_path)
+            except ImportError:
+                logger.info(f"✅ JW Player видео загружено: {output_path}")
+                return str(output_path)
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Ошибка загрузки JW Player видео: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки JW Player видео: {e}")
             return None
     
     def _download_video_direct(self, video_url: str, news_title: str) -> Optional[str]:

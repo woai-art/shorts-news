@@ -230,6 +230,16 @@ class ShortsNewsOrchestrator:
             output_filename = f"short_{news_id}_{int(time.time())}.mp4"
             output_path = os.path.join(self.config['paths']['outputs_dir'], output_filename)
             
+            # Учет стартового смещения видеошапки, если задано в БД
+            try:
+                start_seconds = float(news_data.get('video_start_seconds') or 0)
+            except Exception:
+                start_seconds = 0.0
+            try:
+                self.video_exporter.header_video_start_seconds = start_seconds
+            except Exception:
+                pass
+
             video_path = self.video_exporter.create_news_short_video(video_data, output_path)
 
             if not video_path:

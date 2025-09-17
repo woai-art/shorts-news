@@ -47,6 +47,17 @@ class NewsTelegramBot:
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
         self.channel = self.telegram_config.get('channel', "@tubepull_bot")
         self.channel_id = self.telegram_config.get('channel_id', "")
+        # Админ-группа для сервисных уведомлений/команд (из .env)
+        self.publish_group_id = int(os.getenv("PUBLISH_CHANNEL_ID", "0"))
+        # Токен бота, который отправляет сервисные сообщения (по умолчанию тот же)
+        self.publish_bot_token = os.getenv("PUBLISH_BOT_TOKEN", self.bot_token)
+
+        # Диагностика конфигурации отправки
+        try:
+            masked_push = (self.publish_bot_token[:6] + "..." + self.publish_bot_token[-4:]) if self.publish_bot_token else ""
+            logger.info(f"📡 Publish group: {self.publish_group_id}, push bot: {masked_push}")
+        except Exception:
+            pass
 
         # Инициализация веб-парсера для обработки ссылок
         from web_parser import WebParser
@@ -91,7 +102,8 @@ class NewsTelegramBot:
                     fact_check_score REAL,
                     verification_status TEXT,
                     video_created INTEGER DEFAULT 0,
-                    video_url TEXT
+                    video_url TEXT,
+                    video_start_seconds REAL DEFAULT 0
                 )
             ''')
 
@@ -121,6 +133,17 @@ class NewsTelegramBot:
 
             conn.commit()
         logger.info(f"Расширенная база данных новостей инициализирована: {self.db_path}")
+
+        # Миграция: добавить video_start_seconds, если его ещё нет
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(user_news)")}
+                if 'video_start_seconds' not in cols:
+                    conn.execute('ALTER TABLE user_news ADD COLUMN video_start_seconds REAL DEFAULT 0')
+                    conn.commit()
+                    logger.info("🔧 Добавлен столбец video_start_seconds в user_news")
+        except Exception as e:
+            logger.warning(f"Не удалось выполнить миграцию video_start_seconds: {e}")
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
@@ -203,6 +226,50 @@ class NewsTelegramBot:
 
         await update.message.reply_text(stats_message)
 
+    async def startat_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Установка стартового времени для видео: /startat <news_id> <seconds>"""
+        try:
+            chat_id = update.effective_chat.id
+            if self.publish_group_id and chat_id != self.publish_group_id:
+                await update.message.reply_text("Эта команда доступна только в админ-группе.")
+                return
+
+            args = context.args or []
+            if len(args) < 2:
+                await update.message.reply_text("Использование: /startat <news_id> <seconds>")
+                return
+
+            news_id = int(args[0])
+            seconds = float(args[1])
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('UPDATE user_news SET video_start_seconds=? WHERE id=?', (seconds, news_id))
+                conn.commit()
+            await update.message.reply_text(f"✅ Старт для видео новости {news_id} установлен: {seconds} c")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+
+    def _set_video_start_seconds(self, news_id: int, start_seconds: float):
+        """Устанавливает время старта видео для новости."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE user_news 
+                SET video_start_seconds = ? 
+                WHERE id = ?
+            """, (start_seconds, news_id))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Установлено время старта видео для новости {news_id}: {start_seconds}с")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка установки времени старта видео: {e}")
+            return False
+
     async def _handle_channel_message(self, message_text: str, user_id: int, chat_id: int):
         """Обработка сообщений из канала мониторинга"""
         logger.info(f"🔄 Обработка сообщения из канала: {message_text[:100]}...")
@@ -247,6 +314,15 @@ class NewsTelegramBot:
             news_id = self._save_parsed_news(parsed_data, user_id, chat_id)
             logger.info(f"✅ Новость сохранена в БД (ID: {news_id}): {parsed_data['title'][:50]}...")
 
+            # Если есть видео — отправим запрос на указание старта воспроизведения в админ-группу
+            try:
+                videos = parsed_data.get('videos') or []
+                if self.publish_group_id and videos:
+                    # Используем унифицированный HTTP-нотификатор (работает без asyncio контекста Telegram)
+                    self._notify_group_on_video(news_id, parsed_data.get('title',''), videos)
+            except Exception as e:
+                logger.warning(f"Не удалось отправить сервисное сообщение в группу: {e}")
+
             # Отправка статуса в канал публикации
             if hasattr(self, 'telegram_publisher') and self.telegram_publisher:
                 try:
@@ -283,6 +359,47 @@ class NewsTelegramBot:
         except Exception as e:
             logger.error(f"❌ Ошибка обработки текста из канала: {e}")
 
+    def _notify_group_on_video(self, news_id: int, title: str, videos: list[str]):
+        """Сервисное уведомление в админ-группу о найденном видео и просьба указать старт."""
+        try:
+            if not self.publish_group_id or not self.publish_bot_token or not videos:
+                return
+            import requests
+            preview = videos[0][:80] + ('...' if len(videos[0]) > 80 else '')
+            text = (
+                f"🎬 Готовим новость ID {news_id}: {title[:64]}\n"
+                f"Видео найдено: {preview}\n\n"
+                f"Укажите старт (в секундах) командой: /startat {news_id} <seconds>\n"
+                f"Напр.: /startat {news_id} 5 — начать с 5 секунды.\n"
+                f"Оставьте как есть — будет 0 c."
+            )
+            url = f"https://api.telegram.org/bot{self.publish_bot_token}/sendMessage"
+            resp = requests.post(url, json={
+                'chat_id': self.publish_group_id,
+                'text': text
+            }, timeout=8)
+            try:
+                logger.info(f"📨 push status={resp.status_code}: {resp.text[:200]}")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"Не удалось отправить сервисное сообщение в группу (HTTP): {e}")
+
+    def _send_group_ping(self):
+        """Пробная отправка сообщения в админ-группу для проверки конфигурации."""
+        try:
+            if not self.publish_group_id or not self.publish_bot_token:
+                return
+            import requests
+            url = f"https://api.telegram.org/bot{self.publish_bot_token}/sendMessage"
+            resp = requests.post(url, json={
+                'chat_id': self.publish_group_id,
+                'text': '✅ Monitor online. Сервисные уведомления активны.'
+            }, timeout=8)
+            logger.info(f"📡 ping status={resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Не удалось отправить ping в группу: {e}")
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений"""
         message_text = update.message.text.strip()
@@ -294,6 +411,25 @@ class NewsTelegramBot:
             logger.info(f"📡 Получено сообщение из канала {self.channel}: {message_text[:100]}...")
             await self._handle_channel_message(message_text, user_id, chat_id)
             return
+
+        # Команда из админ-группы для установки старта видео
+        if self.publish_group_id and chat_id == self.publish_group_id and message_text.lower().startswith('/startat'):
+            try:
+                parts = message_text.split()
+                if len(parts) >= 3:
+                    news_id = int(parts[1])
+                    seconds = float(parts[2])
+                    with sqlite3.connect(self.db_path) as conn:
+                        conn.execute('UPDATE user_news SET video_start_seconds=? WHERE id=?', (seconds, news_id))
+                        conn.commit()
+                    await update.message.reply_text(f"✅ Старт для видео новости {news_id} установлен: {seconds} c")
+                    return
+                else:
+                    await update.message.reply_text("Использование: /startat <news_id> <seconds>")
+                    return
+            except Exception as e:
+                await update.message.reply_text(f"❌ Ошибка: {e}")
+                return
 
         # Проверка на URL
         url_pattern = r'https?://[^\s]+'
@@ -473,6 +609,16 @@ class NewsTelegramBot:
 
                 conn.commit()
                 logger.info(f"Новость сохранена в БД с ID {news_id}")
+
+                # Сервисное уведомление в группу, если есть видео
+                try:
+                    videos_list = news_data.get('videos') or []
+                    if isinstance(videos_list, str):
+                        videos_list = [v for v in videos_list.split(',') if v]
+                    if videos_list:
+                        self._notify_group_on_video(news_id, news_data.get('title',''), videos_list)
+                except Exception as e:
+                    logger.warning(f"Не удалось уведомить группу о видео: {e}")
                 return news_id
 
             except Exception as e:
@@ -688,7 +834,8 @@ class NewsTelegramBot:
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("stats", self.stats_command))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        application.add_handler(CommandHandler("startat", self.startat_command))
+        application.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, self.handle_message))
 
         # Запуск бота
         logger.info("✅ Бот запущен и готов к работе")

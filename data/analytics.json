@@ -1,10 +1,10 @@
 {
   "start_date": "2025-08-30T19:44:06.359903",
-  "total_news": 177,
-  "processed_news": 169,
+  "total_news": 192,
+  "processed_news": 184,
   "failed_news": 8,
   "categories": {
-    "unknown": 169,
+    "unknown": 184,
     "error": 8
   },
   "sources": {
@@ -18,7 +18,7 @@
     "x.com": 5,
     "www.politico.com": 14,
     "Washington Post": 1,
-    "New York Times": 4,
+    "New York Times": 6,
     "Reuters": 5,
     "www.politico.eu": 3,
     "www.cnn.com": 1,
@@ -27,10 +27,12 @@
     "www.lemonde.fr": 7,
     "www.thetimes.com": 1,
     "www.newsweek.com": 1,
-    "Politico": 7
+    "Politico": 8,
+    "www.cbsnews.com": 1,
+    "Associated Press": 11
   },
   "languages": {
-    "unknown": 177
+    "unknown": 192
   },
   "daily_stats": {
     "2025-08-30": {
@@ -253,7 +255,7 @@
       ]
     },
     "2025-09-17": {
-      "processed": 7,
+      "processed": 22,
       "failed": 0,
       "categories": {},
       "processing_times": [
@@ -263,13 +265,28 @@
         74.26574635505676,
         72.43727540969849,
         68.96175050735474,
-        160.1199390888214
+        160.1199390888214,
+        90.36177158355713,
+        142.10822296142578,
+        56.87256050109863,
+        66.4552710056305,
+        70.47402572631836,
+        77.80360412597656,
+        66.23667693138123,
+        72.68956160545349,
+        57.12618064880371,
+        114.31071758270264,
+        101.5178735256195,
+        108.91925978660583,
+        122.29516530036926,
+        110.74386262893677,
+        129.58362007141113
       ]
     }
   },
   "performance": {
-    "avg_processing_time": 53.69437638783859,
-    "success_rate": 0.9548022598870056,
-    "error_rate": 0.04519774011299435
+    "avg_processing_time": 56.726057263712086,
+    "success_rate": 0.9583333333333334,
+    "error_rate": 0.041666666666666664
   }
 }
