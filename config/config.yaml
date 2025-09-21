@@ -102,6 +102,10 @@ news_sources:
     domains: ["theguardian.com"]
     logo_file: "guardian.png"
     display_name: "The Guardian"
+  nbcnews:
+    domains: ["nbcnews.com", "www.nbcnews.com"]
+    logo_file: "NBCNews.png"
+    display_name: "NBC News"
   nytimes:
     domains: ["nytimes.com"]
     logo_file: "nytimes.png"

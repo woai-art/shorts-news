@@ -10,7 +10,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Any
 import yaml
 from datetime import datetime
 
@@ -538,37 +538,6 @@ class VideoExporter:
         date_y = (h - date_h) // 2  # Центрируем по вертикали
         draw.text((padding, date_y), left_text, font=font, fill=(255, 255, 255))
         
-        # Центральная подпись источника (для улучшения читаемости бренда)
-        try:
-            center_font = self._load_font(self.footer_font_path, 30)
-            center_text = source_name.upper()
-
-            # Ограничиваем ширину центральной подписи (оставляя поля слева/справа под дату и логотип)
-            max_center_width = int(w * 0.5)
-            text_w, text_h = draw.textbbox((0, 0), center_text, font=center_font)[2:4]
-
-            # Функция усечения текста с троеточием, чтобы влезал
-            def _fit_text(text: str) -> str:
-                if draw.textbbox((0, 0), text, font=center_font)[2] <= max_center_width:
-                    return text
-                ellipsis = '…'
-                for cut in range(len(text) - 1, 0, -1):
-                    candidate = text[:cut].rstrip() + ellipsis
-                    if draw.textbbox((0, 0), candidate, font=center_font)[2] <= max_center_width:
-                        return candidate
-                return ellipsis
-
-            center_text = _fit_text(center_text)
-
-            # Лёгкая тень для контраста
-            cx = (w - draw.textbbox((0, 0), center_text, font=center_font)[2]) // 2
-            cy = (h - draw.textbbox((0, 0), center_text, font=center_font)[3]) // 2
-            shadow_offset = 2
-            draw.text((cx + shadow_offset, cy + shadow_offset), center_text, font=center_font, fill=(0, 0, 0))
-            draw.text((cx, cy), center_text, font=center_font, fill=(230, 230, 230))
-        except Exception as _e:
-            pass
-
         # Проверяем, является ли источником Twitter/X для особой обработки
         is_twitter = any(domain in url.lower() for domain in ['twitter.com', 'x.com'])
         
@@ -576,6 +545,37 @@ class VideoExporter:
             # Специальная обработка для Twitter: дата, аватар автора, никнейм, логотип X
             self._render_twitter_footer_elements(img, draw, font, news_data, w, h, padding)
         else:
+            # Центральная подпись источника (для улучшения читаемости бренда) - только для НЕ-Twitter источников
+            try:
+                center_font = self._load_font(self.footer_font_path, 30)
+                center_text = source_name.upper()
+
+                # Ограничиваем ширину центральной подписи (оставляя поля слева/справа под дату и логотип)
+                max_center_width = int(w * 0.5)
+                text_w, text_h = draw.textbbox((0, 0), center_text, font=center_font)[2:4]
+
+                # Функция усечения текста с троеточием, чтобы влезал
+                def _fit_text(text: str) -> str:
+                    if draw.textbbox((0, 0), text, font=center_font)[2] <= max_center_width:
+                        return text
+                    ellipsis = '…'
+                    for cut in range(len(text) - 1, 0, -1):
+                        candidate = text[:cut].rstrip() + ellipsis
+                        if draw.textbbox((0, 0), candidate, font=center_font)[2] <= max_center_width:
+                            return candidate
+                    return ellipsis
+
+                center_text = _fit_text(center_text)
+
+                # Лёгкая тень для контраста
+                cx = (w - draw.textbbox((0, 0), center_text, font=center_font)[2]) // 2
+                cy = (h - draw.textbbox((0, 0), center_text, font=center_font)[3]) // 2
+                shadow_offset = 2
+                draw.text((cx + shadow_offset, cy + shadow_offset), center_text, font=center_font, fill=(0, 0, 0))
+                draw.text((cx, cy), center_text, font=center_font, fill=(230, 230, 230))
+            except Exception as _e:
+                pass
+            
             # Стандартная обработка для других источников
             self._render_standard_footer_elements(img, draw, font, source_name, logo_path, w, h, padding)
         
@@ -641,8 +641,21 @@ class VideoExporter:
         
         # 3. Аватар автора (левее никнейма) - уже центрирован
         if username:
-            avatar_path = Path(self.logos_dir) / f'twitter_{username}.png'
-            if avatar_path.exists():
+            # Пробуем разные варианты имен файлов аватарок
+            avatar_paths = [
+                Path(self.logos_dir) / f'avatar_{username}.png',  # Новый формат от Twitter движка
+                Path(self.logos_dir) / f'twitter_{username}.png',  # Старый формат
+                Path(self.logos_dir) / f'avatar_{username.lstrip("@")}.png'  # Без @
+            ]
+            
+            avatar_path = None
+            for path in avatar_paths:
+                if path.exists():
+                    avatar_path = path
+                    break
+            
+            if avatar_path and avatar_path.exists():
+                logger.info(f"🖼️ Найден аватар: {avatar_path}")
                 try:
                     avatar = Image.open(avatar_path).convert('RGBA')
                     avatar_size = int(h * 0.7)  # Аватар занимает 70% высоты футера
@@ -668,11 +681,14 @@ class VideoExporter:
                     
                 except Exception as e:
                     logger.warning(f"⚠️ Не удалось загрузить аватар {avatar_path}: {e}")
+            else:
+                logger.warning(f"⚠️ Аватар для @{username} не найден. Проверенные пути: {avatar_paths}")
     
     def _render_standard_footer_elements(self, img: Image.Image, draw: ImageDraw.ImageDraw,
                                        font: ImageFont.ImageFont, source_name: str, logo_path: str,
                                        w: int, h: int, padding: int):
         """Рендерит стандартные элементы футера для обычных источников."""
+        print(f"🔍 DEBUG: _render_standard_footer_elements - source_name: '{source_name}', logo_path: '{logo_path}'")
         # Если есть логотип, добавляем его справа
         if logo_path and Path(logo_path).exists():
             try:
@@ -753,7 +769,9 @@ class VideoExporter:
                 domain = domain[4:]
             
             # Ищем соответствие в конфигурации источников
+            print(f"🔍 DEBUG: _get_source_info - domain: '{domain}', news_sources: {list(self.news_sources.keys())}")
             for source_key, source_config in self.news_sources.items():
+                print(f"🔍 DEBUG: Проверяем {source_key}: domains={source_config.get('domains', [])}")
                 if domain in source_config.get('domains', []):
                     logo_path = Path(self.logos_dir) / source_config.get('logo_file', '')
                     
@@ -780,7 +798,7 @@ class VideoExporter:
                     # Возвращаем без логотипа
                     return {
                         'name': source_config.get('display_name', source_key.upper()),
-                        'logo_path': None
+                        'logo_path': ''
                     }
             
             # Если источник не найден в конфигурации, пробуем автоматическое скачивание
@@ -795,12 +813,12 @@ class VideoExporter:
             # Если ничего не помогло, возвращаем стандартную информацию
             return {
                 'name': domain.split('.')[0].upper(),
-                'logo_path': None
+                'logo_path': ''
             }
             
         except Exception as e:
             logger.warning(f"Ошибка определения источника для {url}: {e}")
-            return {'name': 'NEWS', 'logo_path': None}
+            return {'name': 'NEWS', 'logo_path': ''}
 
     def create_news_short_video(self, news_data: Dict, output_path: str) -> Optional[str]:
         """
@@ -1153,7 +1171,14 @@ class SeleniumVideoExporter:
             
             # Определяем источник и логотип
             source_name = self._extract_source_name(news_data.get('url', ''))
-            source_logo_path = self._get_source_logo_path(source_name)
+            print(f"🔍 DEBUG: URL: '{news_data.get('url', '')}', извлеченный источник: '{source_name}'")
+            print(f"🔍 DEBUG: news_data source: '{news_data.get('source', '')}'")
+            
+            # Для Twitter используем logo_manager для скачивания аватарки
+            if news_data.get('source', '').upper() == 'TWITTER' and news_data.get('username'):
+                source_logo_path = self._get_twitter_avatar_path(news_data.get('username'), news_data.get('url', ''))
+            else:
+                source_logo_path = self._get_source_logo_path(source_name)
             
             # Получаем изображение новости
             news_image_path = self._get_news_image(news_data)
@@ -1169,6 +1194,7 @@ class SeleniumVideoExporter:
                 '{{NEWS_IMAGE}}': news_image_path or '../resources/default_backgrounds/news_default.jpg',
                 '{{NEWS_VIDEO}}': news_video_path or '',
                 '{{SOURCE_LOGO}}': source_logo_path,
+                '{{TWITTER_AVATAR}}': self._get_twitter_avatar_path(news_data) if news_data.get('source', '').upper() == 'TWITTER' else '',
                 '{{SOURCE_NAME}}': source_name,  # Только название источника (например, "CNN")
                 '{{NEWS_TITLE}}': (news_data.get('title', 'Заголовок новости')[:80] + ('...' if len(news_data.get('title', '')) > 80 else '')),
                 '{{NEWS_BRIEF}}': news_data.get('summary', news_data.get('description', ''))[:500] + ('...' if len(news_data.get('summary', news_data.get('description', ''))) > 500 else ''),
@@ -1219,9 +1245,53 @@ class SeleniumVideoExporter:
             return 'ALJAZEERA'
         elif 'abc' in url.lower():
             return 'ABC'
+        elif 'nbcnews.com' in url.lower():
+            return 'NBCNEWS'
         else:
             return 'News'
 
+    def _get_twitter_avatar_path(self, username: str, url: str) -> str:
+        """Получает путь к аватарке Twitter пользователя"""
+        try:
+            logger.info(f"🐦 Попытка скачать аватарку для @{username} из {url}")
+            if self.logo_manager:
+                # Используем logo_manager для скачивания аватарки
+                avatar_path = self.logo_manager.get_logo_path(url, {})
+                logger.info(f"🐦 LogoManager вернул: {avatar_path}")
+                if avatar_path and os.path.exists(avatar_path):
+                    logger.info(f"✅ Аватарка найдена: {avatar_path}")
+                    return f"../{avatar_path}"
+                else:
+                    logger.warning(f"❌ Аватарка не найдена или не существует: {avatar_path}")
+            else:
+                logger.warning("❌ LogoManager не инициализирован")
+            
+            # Если не удалось скачать, используем дефолтный логотип X
+            logger.info("🔄 Используем дефолтный логотип X")
+            return "../media/X_logo.png"
+        except Exception as e:
+            logger.warning(f"Ошибка получения аватарки Twitter для @{username}: {e}")
+            return "../media/X_logo.png"
+
+    def _get_twitter_avatar_path(self, news_data: Dict[str, Any]) -> str:
+        """Получает путь к аватару Twitter пользователя"""
+        try:
+            username = news_data.get('username', '').lstrip('@')
+            if not username:
+                return ''
+            
+            # Ищем аватар в папке logos
+            logos_avatar = f"resources/logos/avatar_{username}.png"
+            if os.path.exists(logos_avatar):
+                return logos_avatar
+            
+            # Если не найден, возвращаем пустую строку
+            return ''
+            
+        except Exception as e:
+            logger.warning(f"Ошибка получения пути к аватару Twitter: {e}")
+            return ''
+    
     def _get_source_logo_path(self, source_name: str) -> str:
         """Получает путь к логотипу источника"""
         logo_files = {
@@ -1234,10 +1304,13 @@ class SeleniumVideoExporter:
             'WSJ': 'media/WSJ.jpg',
             'CNBC': 'media/CNBC.png',
             'ALJAZEERA': 'media/ALJAZEERA.jpg',
-            'ABC': 'media/ABC.jpg'
+            'ABC': 'media/ABC.jpg',
+            'NBC': 'media/NBCNews.png',
+            'NBCNEWS': 'media/NBCNews.png'
         }
         
         logo_path = logo_files.get(source_name, 'media/CNN.jpg')  # CNN как дефолт
+        logger.info(f"🔍 DEBUG: Источник: '{source_name}', логотип: '{logo_path}'")
         
         # Проверяем, существует ли файл
         if os.path.exists(logo_path):

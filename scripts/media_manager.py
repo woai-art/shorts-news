@@ -25,7 +25,7 @@ class MediaManager:
         self.config = config
         self.media_dir = Path("resources/media/news")
         self.media_dir.mkdir(parents=True, exist_ok=True)
-        self.selenium_driver = None  # Для передачи WebDriver из WebParser
+        self.selenium_driver = None  # Для передачи WebDriver из движков
         
         # Список User-Agent для ротации (как в WebParser)
         self.user_agents = [
@@ -65,12 +65,37 @@ class MediaManager:
             'video_url': None,
             'thumbnail': None,
             'local_image_path': None,
-            'local_video_path': None
+            'local_video_path': None,
+            'has_media': False  # Флаг наличия медиа для шапки
         }
         
         try:
             images = news_data.get('images', [])
             videos = news_data.get('videos', [])
+            
+            # Специальное правило: для POLITICO используем только изображения с домена POLITICO
+            source_name = (news_data.get('source') or '').upper()
+            if source_name == 'POLITICO' and images:
+                def normalize(url_or_obj):
+                    if isinstance(url_or_obj, dict):
+                        return url_or_obj.get('url') or url_or_obj.get('src') or ''
+                    return url_or_obj or ''
+                # Поддерживаем как US, так и EU версии сайта и Cloudflare трансформации
+                allowed_substrings = [
+                    'politico.com', 'www.politico.com', 'static.politico.com',
+                    'politico.eu', 'www.politico.eu', '/cdn-cgi/image',
+                    'dims4/default/resize'
+                ]
+                filtered_images = []
+                for itm in images:
+                    u = normalize(itm).lower()
+                    if any(sub in u for sub in allowed_substrings):
+                        filtered_images.append(itm)
+                if filtered_images:
+                    images = filtered_images
+                else:
+                    logger.warning("❌ POLITICO: подходящих изображений на домене не найдено; отклоняем внешние/стоковые")
+                    images = []
             
             # Обрабатываем видео в первую очередь
             if videos:
@@ -94,7 +119,8 @@ class MediaManager:
                         media_result.update({
                             'video_url': video_url,
                             'local_video_path': local_path,
-                            'thumbnail': local_path
+                            'thumbnail': local_path,
+                            'has_media': True
                         })
                         logger.info(f"✅ Видео успешно обработано: {local_path}")
                         return media_result
@@ -122,7 +148,8 @@ class MediaManager:
                             media_result.update({
                                 'video_url': tweet_url,
                                 'local_video_path': video_path,
-                                'thumbnail': video_path
+                                'thumbnail': video_path,
+                                'has_media': True
                             })
                             logger.info(f"✅ Twitter видео успешно скачано: {video_path}")
                             return media_result
@@ -153,7 +180,8 @@ class MediaManager:
                             media_result.update({
                                 'primary_image': media_url,
                                 'local_image_path': local_path,
-                                'thumbnail': local_path
+                                'thumbnail': local_path,
+                                'has_media': True
                             })
                             logger.info(f"✅ GIF успешно обработан: {local_path}")
                             break
@@ -181,7 +209,8 @@ class MediaManager:
                             media_result.update({
                                 'primary_image': media_url,
                                 'local_image_path': local_path,
-                                'thumbnail': local_path
+                                'thumbnail': local_path,
+                                'has_media': True
                             })
                             logger.info(f"✅ Изображение успешно обработано: {local_path}")
                             break

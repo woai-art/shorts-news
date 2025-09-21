@@ -67,11 +67,14 @@ class LogoManager:
     def _download_image(self, url: str, output_path: Path) -> bool:
         """Скачивает изображение по URL и сохраняет его."""
         try:
+            logger.info(f"📥 Скачиваем изображение: {url}")
             response = self.session.get(url, timeout=10, stream=True)
+            logger.info(f"📥 Ответ: {response.status_code}")
             response.raise_for_status()
             
             # Проверяем тип контента
             content_type = response.headers.get('content-type', '').lower()
+            logger.info(f"📥 Content-Type: {content_type}")
             if not content_type.startswith('image/'):
                 logger.warning(f"URL не содержит изображение: {content_type}")
                 return False
@@ -80,6 +83,8 @@ class LogoManager:
             with open(output_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+            
+            logger.info(f"📥 Файл сохранен: {output_path}")
             
             # Проверяем и оптимизируем изображение
             return self._optimize_image(output_path)
@@ -144,44 +149,99 @@ class LogoManager:
             return None
     
     def _get_twitter_avatar(self, username: str) -> Optional[str]:
-        """Получает URL аватара пользователя Twitter/X."""
+        """Получает URL аватара пользователя Twitter/X с улучшенными методами."""
         try:
+            import json
+            
+            # Убираем @ если есть
+            username = username.lstrip('@')
+            logger.info(f"🐦 Ищем аватар для @{username}")
+            
             # Используем разные методы получения аватарок
             avatar_urls = []
             
-            # Метод 1: Через публичные API
+            # Метод 1: Twitter Syndication API (самый надежный)
             try:
-                # Используем публичный сервис для получения аватарок
-                api_url = f"https://unavatar.io/twitter/{username}"
-                response = self.session.head(api_url, timeout=5)
+                user_id_url = f"https://cdn.syndication.twimg.com/timeline/profile?screen_name={username}"
+                logger.info(f"🔍 Пробуем Syndication API: {user_id_url}")
+                response = self.session.get(user_id_url, timeout=10)
                 if response.status_code == 200:
-                    avatar_urls.append(api_url)
-            except:
-                pass
+                    try:
+                        data = response.json()
+                        if 'user' in data and 'profile_image_url' in data['user']:
+                            avatar_url = data['user']['profile_image_url']
+                            # Увеличиваем размер аватара
+                            if '_normal' in avatar_url:
+                                avatar_url = avatar_url.replace('_normal', '_400x400')
+                            avatar_urls.append(avatar_url)
+                            logger.info(f"✅ Найден аватар через Syndication API: {avatar_url}")
+                    except json.JSONDecodeError:
+                        logger.warning("⚠️ Не удалось декодировать JSON ответ")
+            except Exception as e:
+                logger.warning(f"❌ Ошибка Syndication API: {e}")
             
-            # Метод 2: Через GitHub (если username совпадает)
-            try:
-                github_url = f"https://github.com/{username}.png"
-                response = self.session.head(github_url, timeout=5)
-                if response.status_code == 200:
-                    avatar_urls.append(github_url)
-            except:
-                pass
-            
-            # Метод 3: Если ничего не нашли, не используем дефолтную аватарку
+            # Метод 2: Unavatar.io (внешний сервис)
             if not avatar_urls:
-                logger.warning(f"Не удалось найти аватарку для @{username}, используем локальную")
+                try:
+                    api_url = f"https://unavatar.io/twitter/{username}"
+                    logger.info(f"🔍 Проверяем Unavatar API: {api_url}")
+                    response = self.session.head(api_url, timeout=5)
+                    if response.status_code in [200, 301, 302]:
+                        avatar_urls.append(api_url)
+                        logger.info(f"✅ Unavatar API доступен: {api_url}")
+                except Exception as e:
+                    logger.warning(f"❌ Ошибка Unavatar API: {e}")
+            
+            # Метод 3: Альтернативные внешние сервисы
+            if not avatar_urls:
+                alternative_services = [
+                    f"https://unavatar.io/{username}",
+                    f"https://api.dicebear.com/7.x/avataaars/png?seed={username}",
+                    f"https://ui-avatars.com/api/?name={username}&background=random&size=200&format=png"
+                ]
+                
+                for service_url in alternative_services:
+                    try:
+                        response = self.session.head(service_url, timeout=5)
+                        if response.status_code in [200, 301, 302]:
+                            avatar_urls.append(service_url)
+                            logger.info(f"✅ Альтернативный сервис доступен: {service_url}")
+                            break
+                    except:
+                        continue
+            
+            # Метод 4: GitHub fallback (если username совпадает)
+            if not avatar_urls:
+                try:
+                    github_url = f"https://github.com/{username}.png"
+                    response = self.session.head(github_url, timeout=5)
+                    if response.status_code == 200:
+                        avatar_urls.append(github_url)
+                        logger.info(f"✅ GitHub аватар доступен: {github_url}")
+                except:
+                    pass
+            
+            # Метод 5: Генерация аватара как последний resort
+            if not avatar_urls:
+                logger.warning(f"⚠️ Не удалось найти аватарку для @{username}, генерируем аватар")
+                avatar_urls = [
+                    f"https://api.dicebear.com/7.x/avataaars/svg?seed={username}",
+                    f"https://ui-avatars.com/api/?name={username}&background=random&size=200&format=png&color=fff"
+                ]
             
             # Пробуем скачать первую доступную аватарку
-            for avatar_url in avatar_urls:
+            for i, avatar_url in enumerate(avatar_urls):
                 try:
+                    logger.info(f"🔄 Пробуем URL {i+1}: {avatar_url}")
                     response = self.session.head(avatar_url, timeout=5)
-                    if response.status_code == 200:
+                    if response.status_code in [200, 301, 302]:
                         logger.info(f"🐦 Найдена аватарка для @{username}: {avatar_url}")
                         return avatar_url
-                except:
+                except Exception as e:
+                    logger.warning(f"❌ Ошибка проверки URL {i+1}: {e}")
                     continue
             
+            logger.warning(f"❌ Не удалось найти аватарку для @{username}")
             return None
             
         except Exception as e:
@@ -222,16 +282,23 @@ class LogoManager:
             import re
             username_match = re.search(r'(?:twitter\.com|x\.com)/([^/]+)', url)
             if not username_match:
+                logger.warning(f"❌ Не удалось извлечь username из URL: {url}")
                 return None
             
             username = username_match.group(1)
+            logger.info(f"🐦 Извлечен username: @{username}")
             avatar_url = self._get_twitter_avatar(username)
             
             if avatar_url:
+                logger.info(f"🐦 Найден URL аватарки: {avatar_url}")
                 output_path = self.logos_dir / f"twitter_{username}.png"
                 if self._download_image(avatar_url, output_path):
                     logger.info(f"📱 Скачан аватар @{username}: {output_path.name}")
                     return str(output_path)
+                else:
+                    logger.warning(f"❌ Не удалось скачать аватарку: {avatar_url}")
+            else:
+                logger.warning(f"❌ Не удалось найти URL аватарки для @{username}")
             
             return None
             

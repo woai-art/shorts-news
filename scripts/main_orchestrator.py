@@ -24,6 +24,9 @@ from youtube_uploader import YouTubeUploader
 from telegram_publisher import TelegramPublisher
 from analytics import NewsAnalytics
 
+# Импортируем новую архитектуру движков
+from engines import registry, PoliticoEngine, WashingtonPostEngine, TwitterEngine, NBCNewsEngine
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +54,9 @@ class ShortsNewsOrchestrator:
         self.telegram_bot = None
         self.telegram_publisher = None
         self.analytics = NewsAnalytics()
+        
+        # Инициализация движков
+        self.engines_initialized = False
 
         # Статистика работы
         self.stats = {
@@ -59,6 +65,7 @@ class ShortsNewsOrchestrator:
             'failed_videos': 0,
             'uploaded_videos': 0,
             'skipped_low_quality': 0,
+            'skipped_no_media': 0,
             'start_time': time.time()
         }
 
@@ -67,11 +74,81 @@ class ShortsNewsOrchestrator:
         with open(config_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
 
+    def initialize_engines(self):
+        """Инициализация движков новостных источников"""
+        if self.engines_initialized:
+            return
+            
+        logger.info("Инициализация движков новостных источников...")
+        
+        try:
+            # Регистрируем движки
+            registry.register_engine('politico', PoliticoEngine)
+            registry.register_engine('washingtonpost', WashingtonPostEngine)
+            registry.register_engine('twitter', TwitterEngine)
+            registry.register_engine('nbcnews', NBCNewsEngine)
+            
+            # TODO: Добавить остальные движки
+            # registry.register_engine('apnews', APNewsEngine)
+            # registry.register_engine('cnn', CNNEngine)
+            # registry.register_engine('reuters', ReutersEngine)
+            
+            self.engines_initialized = True
+            logger.info("✓ Движки новостных источников инициализированы")
+            
+        except Exception as e:
+            logger.error(f"Ошибка инициализации движков: {e}")
+            self.engines_initialized = False
+
+    def parse_url_with_engines(self, url: str) -> Optional[Dict[str, Any]]:
+        """
+        Парсит URL используя движки новостных источников
+        
+        Args:
+            url: URL для парсинга
+            
+        Returns:
+            Словарь с данными новости или None
+        """
+        if not self.engines_initialized:
+            logger.warning("Движки не инициализированы, используем fallback")
+            return None
+        
+        try:
+            # Получаем подходящий движок
+            engine = registry.get_engine_for_url(url, self.config)
+            
+            if not engine:
+                logger.warning(f"Не найден подходящий движок для URL: {url[:50]}...")
+                return None
+            
+            # Парсим URL через движок
+            logger.info(f"🔍 Парсинг через движок {engine.source_name}: {url[:50]}...")
+            content = engine.parse_url(url)
+            
+            # Извлекаем медиа
+            media = engine.extract_media(url, content)
+            content.update(media)
+            
+            # Валидируем контент
+            if not engine.validate_content(content):
+                logger.warning(f"Контент не прошел валидацию движка {engine.source_name}")
+                return None
+            
+            logger.info(f"✅ URL успешно обработан движком {engine.source_name}")
+            return content
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга через движки: {e}")
+            return None
+
     def initialize_components(self):
         """Инициализация всех компонентов системы"""
         logger.info("Инициализация компонентов системы...")
 
         try:
+            # Сначала инициализируем движки
+            self.initialize_engines()
             # Telegram Bot для получения новостей
             from telegram_bot import NewsTelegramBot
             self.telegram_bot = NewsTelegramBot(self.config_path)
@@ -82,7 +159,9 @@ class ShortsNewsOrchestrator:
             logger.info("✓ LLM Processor инициализирован")
 
             # Video Exporter (используем Selenium для генерации HTML5 анимаций)
-            self.video_exporter = VideoExporter(self.config['video'], self.config['paths'])
+            video_config = self.config['video'].copy()
+            video_config['news_sources'] = self.config.get('news_sources', {})
+            self.video_exporter = VideoExporter(video_config, self.config['paths'])
             logger.info("✓ Video Exporter (Selenium) инициализирован")
             
 
@@ -144,6 +223,38 @@ class ShortsNewsOrchestrator:
         except Exception as e:
             logger.error(f"Ошибка в цикле обработки: {e}")
 
+    def process_news_by_id(self, news_id: int):
+        """Обработка конкретной новости по ID"""
+        logger.info(f"[TARGET] Обработка новости ID {news_id}...")
+        
+        try:
+            # Инициализируем компоненты, если не инициализированы
+            if not self.telegram_bot:
+                self.initialize_components()
+            
+            # Получаем новость по ID
+            news_data = self.telegram_bot.get_news_by_id(news_id)
+            if not news_data:
+                logger.error(f"[ERROR] Новость ID {news_id} не найдена")
+                return False
+            
+            logger.info(f"[SUCCESS] Найдена новость: {news_data.get('title', '')[:50]}...")
+            
+            # Обрабатываем новость и получаем результат
+            success = self._process_single_news(news_data)
+            self.stats['processed_news'] += 1
+            
+            if success:
+                logger.info(f"[SUCCESS] Новость ID {news_id} успешно обработана")
+            else:
+                logger.warning(f"[WARNING] Новость ID {news_id} была забракована")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Ошибка обработки новости ID {news_id}: {e}")
+            return False
+
     def _process_single_news(self, news_data: Dict):
         """Обработка одной новости"""
         news_id = news_data['id']
@@ -170,14 +281,36 @@ class ShortsNewsOrchestrator:
                 try:
                     from datetime import datetime
                     if isinstance(published_date, str):
-                        if 'T' in published_date:  # ISO формат
+                        # Сначала проверяем формат NBC News
+                        if 'GMT' in published_date or 'UTC' in published_date:
+                            # Формат NBC News: "Sept. 19, 2025, 11:18 AM GMT+3 / Updated Sept. 19, 2025, 7:33 PM GMT+3"
+                            try:
+                                # Убираем "Updated" часть и временную зону для парсинга
+                                date_without_updated = published_date.split(' / Updated')[0]
+                                date_without_tz = date_without_updated.split(' GMT')[0].split(' UTC')[0]
+                                logger.info(f"  🔍 DEBUG: Парсим дату NBC '{date_without_tz}'")
+                                # Пробуем разные форматы для NBC News
+                                try:
+                                    dt = datetime.strptime(date_without_tz, '%b. %d, %Y, %I:%M %p')
+                                except:
+                                    # Альтернативный формат без точки после месяца
+                                    dt = datetime.strptime(date_without_tz, '%b %d, %Y, %I:%M %p')
+                                logger.info(f"  ✅ DEBUG: Дата NBC успешно спарсена: {dt}")
+                            except Exception as e:
+                                logger.warning(f"  ❌ DEBUG: Ошибка парсинга NBC даты: {e}")
+                                dt = datetime.now()
+                        elif 'T' in published_date:  # ISO формат
                             dt = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
                         else:
                             # Пробуем другие форматы
                             try:
                                 dt = datetime.strptime(published_date, '%Y-%m-%d %H:%M:%S')
                             except:
-                                dt = datetime.strptime(published_date, '%Y-%m-%d')
+                                try:
+                                    dt = datetime.strptime(published_date, '%Y-%m-%d')
+                                except:
+                                    # Если ничего не сработало, используем текущую дату
+                                    dt = datetime.now()
                         
                         publish_date = dt.strftime('%d.%m.%Y')
                         publish_time = dt.strftime('%H:%M')
@@ -186,18 +319,84 @@ class ShortsNewsOrchestrator:
             
             # Обработка медиа-данных
             media_data = {}
+            has_media_for_header = False
             try:
-                if news_data.get('images'):
-                    from scripts.media_manager import MediaManager
-                    media_manager = MediaManager(self.config)
-                    media_result = media_manager.process_news_media(news_data)
+                # Сначала проверяем, есть ли уже обработанные медиа в базе данных
+                if news_data.get('local_video_path') or news_data.get('image_paths'):
+                    logger.info(f"  Используются существующие медиа из БД для новости {news_id}")
+                    
+                    # Преобразуем image_paths из строки в список, если нужно
+                    image_paths = news_data.get('image_paths')
+                    if isinstance(image_paths, str):
+                        image_paths = [path.strip() for path in image_paths.split('|') if path.strip()]
+                    else:
+                        image_paths = image_paths or []
+
+                    media_data = {
+                        'has_media': True,
+                        'has_video': bool(news_data.get('local_video_path')),
+                        'local_video_path': news_data.get('local_video_path'),
+                        'has_images': bool(image_paths),
+                        'local_image_path': image_paths[0] if image_paths else None,
+                        'local_image_paths': image_paths,
+                        'avatar_path': news_data.get('avatar_path')
+                    }
+                    has_media_for_header = True
+                    logger.info(f"  📸 Медиа из БД: изображение={media_data['has_images']}, видео={media_data['has_video']}, has_media={has_media_for_header}")
+
+                elif news_data.get('images') or news_data.get('videos'):
+                    logger.info(f"  Запускаем полную обработку медиа для новости {news_id}")
+                    # Преобразуем строки в списки для медиа-данных
+                    processed_news_data = news_data.copy()
+                    if isinstance(news_data.get('images'), str):
+                        # Разбиение по разделителю |
+                        processed_news_data['images'] = [url.strip() for url in news_data['images'].split('|') if url.strip()]
+                        logger.info(f"  🔄 Преобразовано {len(processed_news_data['images'])} изображений из строки")
+                    if isinstance(news_data.get('videos'), str):
+                        # Разбиение по разделителю |
+                        processed_news_data['videos'] = [url.strip() for url in news_data['videos'].split('|') if url.strip()]
+                        logger.info(f"  🔄 Преобразовано {len(processed_news_data['videos'])} видео из строки")
+                    
+                    # Отладочная информация
+                    logger.info(f"  📸 Исходные изображения: {news_data.get('images', [])}")
+                    logger.info(f"  📸 Обработанные изображения: {processed_news_data.get('images', [])}")
+                    
+                    source = (news_data.get('source') or '').lower()
+                    if 'politico' in source:
+                        from engines.politico.politico_media_manager import PoliticoMediaManager
+                        media_manager = PoliticoMediaManager(self.config)
+                    elif 'washington' in source or 'washington post' in source:
+                        from engines.washingtonpost.washingtonpost_media_manager import WashingtonPostMediaManager
+                        media_manager = WashingtonPostMediaManager(self.config)
+                    elif 'twitter' in source:
+                        from engines.twitter.twitter_media_manager import TwitterMediaManager
+                        media_manager = TwitterMediaManager(self.config)
+                    elif 'nbc' in source or 'nbc news' in source:
+                        from engines.nbcnews.nbcnews_media_manager import NBCNewsMediaManager
+                        media_manager = NBCNewsMediaManager(self.config)
+                    else:
+                        from scripts.media_manager import MediaManager
+                        media_manager = MediaManager(self.config)
+                    media_result = media_manager.process_news_media(processed_news_data)
                     media_data = media_result
-                    logger.info(f"  📸 Медиа обработано: изображение={bool(media_result.get('local_image_path'))}")
+                    has_media_for_header = media_result.get('has_media', False)
+                    logger.info(f"  📸 Медиа обработано: изображение={bool(media_result.get('local_image_path'))}, видео={bool(media_result.get('local_video_path'))}, has_media={has_media_for_header}")
             except Exception as e:
                 logger.warning(f"  ⚠️ Ошибка обработки медиа: {e}")
+            
+            # Проверка наличия медиа для шапки
+            if not has_media_for_header:
+                logger.warning(f"  ❌ Новость {news_id} не имеет медиа для шапки - бракуем видео")
+                self._send_media_rejection_notification(news_id, news_data)
+                self.stats['skipped_no_media'] = self.stats.get('skipped_no_media', 0) + 1
+                return False
 
+            # Используем SEO заголовок от LLM вместо оригинального заголовка новости
+            seo_title = llm_result.get('seo_package', {}).get('title', '')
+            video_title = seo_title if seo_title else news_data.get('title', 'Breaking News')
+            
             video_data = {
-                'title': news_data.get('title', 'Breaking News'),  # Оригинальный заголовок новости для видео
+                'title': video_title,  # SEO заголовок от LLM для видео
                 'description': news_data.get('description', ''),
                 'summary': llm_result.get('summary', llm_result.get('video_text', news_data.get('description', 'Brief news summary'))),
                 'url': news_data.get('url', ''),
@@ -205,6 +404,8 @@ class ShortsNewsOrchestrator:
                 'publish_date': publish_date,
                 'publish_time': publish_time,
                 'images': news_data.get('images', []),
+                'username': news_data.get('username', ''),  # Добавляем username для аватарки
+                'avatar_path': media_data.get('avatar_path'),  # Добавляем путь к аватару
                 **media_data  # Добавляем медиа-данные
             }
             
@@ -351,6 +552,8 @@ class ShortsNewsOrchestrator:
             if video_url:
                 self.telegram_bot.mark_video_created(news_id, video_url)
             logger.info(f"  ✓ Новость {news_id} отмечена как обработанная")
+            
+            return True
 
         except Exception as e:
             logger.error(f"Ошибка обработки новости {news_id}: {e}")
@@ -367,6 +570,35 @@ class ShortsNewsOrchestrator:
                 self.analytics.record_news_processing(news_analytics_data, False, processing_time)
             except:
                 pass  # Игнорируем ошибки аналитики
+            
+            return False
+
+    def _send_media_rejection_notification(self, news_id: int, news_data: Dict):
+        """Отправляет уведомление о браковке видео из-за отсутствия медиа"""
+        try:
+            title = news_data.get('title', 'Unknown')[:50]
+            source = news_data.get('source', 'Unknown')
+            url = news_data.get('url', '')
+            
+            message = f"❌ **Видео забраковано**\n\n"
+            message += f"📰 **Новость ID:** {news_id}\n"
+            message += f"📝 **Заголовок:** {title}...\n"
+            message += f"📡 **Источник:** {source}\n"
+            message += f"🔗 **URL:** {url}\n\n"
+            message += f"⚠️ **Причина:** Отсутствует медиа для шапки видео\n"
+            message += f"📸 **Изображения:** {len(news_data.get('images', []))}\n"
+            message += f"🎬 **Видео:** {len(news_data.get('videos', []))}\n\n"
+            message += f"💡 **Рекомендация:** Проверьте парсинг медиа или добавьте fallback изображения"
+            
+            # Отправляем через Telegram Publisher
+            if hasattr(self, 'telegram_publisher'):
+                self.telegram_publisher.send_message(message)
+                logger.info(f"📤 Отправлено уведомление о браковке новости {news_id}")
+            else:
+                logger.warning(f"⚠️ Telegram Publisher недоступен для отправки уведомления о браковке")
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки уведомления о браковке: {e}")
 
             raise
 
@@ -468,7 +700,7 @@ class ShortsNewsOrchestrator:
         # 1. Проверка заголовка
         if not title or len(title) < 10:
             issues.append("Заголовок слишком короткий или отсутствует")
-        elif len(title) > 200:
+        elif len(title) > 300:  # Увеличиваем лимит для Twitter
             issues.append("Заголовок слишком длинный")
         elif title.lower() in ['breaking news', 'news', 'update', 'breaking']:
             issues.append("Заголовок слишком общий")
@@ -487,9 +719,11 @@ class ShortsNewsOrchestrator:
             "captcha",
             "cloudflare",
             "access denied",
-            "blocked",
             "verification required",
-            "human verification"
+            "human verification",
+            "you are blocked",
+            "access blocked",
+            "request blocked"
         ]
         
         summary_lower = summary.lower()
@@ -532,6 +766,10 @@ class ShortsNewsOrchestrator:
         special_chars = sum(1 for c in summary if not c.isalnum() and not c.isspace())
         if special_chars > len(summary) * 0.3:  # Более 30% специальных символов
             issues.append("Слишком много специальных символов в тексте")
+        
+        # 8. Проверка фактов (временно отключена)
+        # fact_issues = self._validate_facts(title, summary, description)
+        # issues.extend(fact_issues)
         
         # Логируем результат валидации
         if issues:
@@ -585,6 +823,7 @@ class ShortsNewsOrchestrator:
         logger.info(f"🎬 Создано видео: {self.stats['successful_videos']}")
         logger.info(f"❌ Ошибок при создании видео: {self.stats['failed_videos']}")
         logger.info(f"⚠️ Пропущено низкокачественных: {self.stats['skipped_low_quality']}")
+        logger.info(f"📸 Пропущено без медиа: {self.stats['skipped_no_media']}")
         logger.info(f"📤 Загружено на YouTube: {self.stats['uploaded_videos']}")
 
         if self.stats['processed_news'] > 0:

@@ -1,0 +1,173 @@
+# Centralized prompts for LLM operations
+
+seo:
+  generate_seo_package: |
+    TASK: Create YouTube Shorts SEO package for news content.
+
+    OUTPUT FORMAT: JSON only, no explanations
+    {
+      "title": "...",
+      "description": "...",
+      "tags": ["...", "..."]
+    }
+
+    TITLE RULES:
+    - Maximum 65 characters
+    - Clickbait style but factual
+    - Start with action words or shocking facts
+    - NO generic words like 'news', 'update', 'breaking'
+    - Examples: 'Putin meets Trump at Alaska hotel', 'Bitcoin crashes 40% in single day', 'Ukraine captures Russian general'
+
+    DESCRIPTION RULES:
+    - 1-2 SHORT sentences maximum
+    - Add context or key details not in title
+    - Can be empty if title says everything
+    - Include 5 relevant hashtags at the end with # symbol
+    - ALWAYS add source link at the end: "Source: {source_url}"
+
+    TAGS RULES:
+    - Exactly 12-15 tags
+    - Mix of: specific names, general topics, emotions, locations
+    - Single words or short phrases (max 3 words)
+    - NO '#' symbols
+    - Include: relevant people names, countries, topics, trending keywords
+    - Examples: ['putin', 'trump', 'politics', 'russia', 'america', 'meeting', 'diplomacy', 'world news', 'leadership', 'international', 'alaska', 'summit']
+
+    SOURCE TEXT:
+    {text}
+
+    JSON:
+
+content:
+  summarize_for_video: |
+    Summarize the following news into a clear, neutral, and informative script for a short video. 
+
+    Requirements:
+    - Language: English, neutral and factual
+    - Length: maximum 300 characters (about 2–3 sentences)
+    - Style: professional, news-report tone
+    - Keep one direct quote if it exists, in quotation marks
+    - No speculation, no filler, no incomplete thoughts
+
+    News: {text}
+
+    Final factual short video summary in English:
+
+  complete_news_package: |
+    Create a complete news data package based on this article. Return ONLY valid JSON in this exact format:
+
+    {
+        "content": {
+            "title": "Clean, clickable title (max 60 characters) - NO source names, technical labels, dates, or site suffixes",
+            "summary": "Neutral, factual summary in professional news style (400-600 characters). If the main news contains important quotes, include them EXACTLY as written in quotation marks. Extract main points and avoid misleading interpretation.",
+            "key_points": ["main point 1", "main point 2", "main point 3"],
+            "quotes": [
+                {"text": "exact quote text", "speaker": "speaker name"}
+            ]
+        },
+        "seo": {
+            "youtube_title": "SEO-optimized YouTube title (max 120 characters, can be 2-3 lines)",
+            "youtube_description": "YouTube description with hashtags and context (max 500 characters)",
+            "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+            "hashtags": ["#news", "#breaking", "#politics"],
+            "category": "News & Politics"
+        },
+        "metadata": {
+            "language": "en",
+            "confidence_score": 0.95
+        }
+    }
+
+    Requirements:
+    - Write in professional, neutral, factual tone
+    - Preserve important quotes EXACTLY as written
+    - No speculation or misleading interpretation
+    - Complete sentences only, no cut-offs
+    - For content.title: Remove source names (POLITICO, CNN, etc.), technical labels (Live Updates, Explainer, Opinion), dates, timestamps, section names, brackets, pipes, or site suffixes
+
+    Article from {source_name}: {text}
+
+  structured_animation: |
+    Create structured content for YouTube Shorts animation based on the news.
+    Return JSON in format:
+    {
+        "header": {
+            "text": "Brief title for the top part - IN ENGLISH",
+            "animation": "fadeIn",
+            "duration": 1.5
+        },
+        "body": {
+            "text": "Main news text - IN ENGLISH",
+            "animation": "typewriter",
+            "duration": 2.5
+        },
+        "footer": {
+            "source": "News source",
+            "date": "Date in DD.MM.YYYY format",
+            "animation": "slideUp",
+            "duration": 1.0
+        },
+        "style": {
+            "theme": "dark|light",
+            "accent_color": "#HEX_COLOR",
+            "font_size": "medium"
+        }
+    }
+
+    {corrections_text}
+
+    Исходная новость:
+    Заголовок: {title}
+    Описание: {description}
+    Источник: {source}
+    Дата: {published}
+
+facts:
+  verify_with_search: |
+    Проверь факты в этой новости и убедись в их актуальности.
+    Особое внимание обрати на:
+    - Текущий статус политических фигур (президент, экспрезидент и т.д.)
+    - Актуальность дат и событий
+    - Корректность названий и терминов
+
+    Новость: {news_text}
+
+    {context_block}
+
+    Верни анализ в формате JSON:
+    {
+        "fact_check": {
+            "accuracy_score": 0.0-1.0,
+            "issues_found": ["список проблем"],
+            "corrections": ["список исправлений"],
+            "verification_status": "verified|needs_check|incorrect"
+        },
+        "current_context": {
+            "key_figures_status": {"имя": "текущий статус"},
+            "recent_events": ["важные события"],
+            "breaking_news": "критичная информация"
+        }
+    }
+
+  basic_fact_check: |
+    Ты эксперт по проверке фактов. Проанализируй новость на точность и актуальность.
+    
+    ЗАДАЧА: Найди фактические ошибки в тексте, особенно:
+    - Неправильные или устаревшие политические титулы и должности
+    - Устаревшую информацию о текущих событиях
+    - Логические противоречия
+    - Неточности в датах и временных рамках
+    
+    КОНТЕКСТ: Текущий год - 2025. Проверь актуальность всей информации.
+    
+    ТЕКСТ: {news_text}
+    
+    Верни ТОЛЬКО JSON (без markdown, без комментариев):
+    {
+        "fact_check": {
+            "accuracy_score": 0.9,
+            "issues_found": ["найденная проблема"],
+            "corrections": ["правильная информация"],
+            "verification_status": "verified"
+        }
+    }

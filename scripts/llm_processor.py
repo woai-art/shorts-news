@@ -15,6 +15,7 @@ from datetime import datetime
 from scripts.llm_direct_provider import GeminiDirectProvider
 from logger_config import logger
 from scripts.llm_base import LLMProvider
+from scripts.prompt_loader import load_prompts, format_prompt
 
 # Оставляем только новый SDK
 try:
@@ -100,51 +101,28 @@ class GeminiProvider(LLMProvider):
 
     def _verify_facts_with_search(self, news_text: str, context: str = "") -> Dict[str, Any]:
         """Проверка фактов через Google Search Grounding"""
-        # Проверяем, включена ли проверка фактов
-        if not self.grounding_is_available:
-            logger.info("Проверка фактов отключена в конфигурации")
-            return {
-                'fact_check': {
-                    'accuracy_score': 1.0,
-                    'issues_found': [],
-                    'corrections': [],
-                    'verification_status': 'skipped'
-                },
-                'grounding_data': {'chunks': [], 'supports': []},
-                'verification_sources': []
-            }
+        # Временно отключаем проверку фактов для тестирования
+        logger.info("Проверка фактов временно отключена для тестирования")
+        return {
+            'fact_check': {
+                'accuracy_score': 1.0,
+                'issues_found': [],
+                'corrections': [],
+                'verification_status': 'skipped'
+            },
+            'grounding_data': {'chunks': [], 'supports': []},
+            'verification_sources': []
+        }
 
         # Если нет поддержки grounding, используем базовую проверку
         if not self.force_direct_api and (not USE_NEW_SDK or not self.grounding_config):
             logger.info("Google Search Grounding недоступен, используем базовую проверку")
             return self._basic_fact_check(news_text, context)
 
-        prompt = f"""
-        Проверь факты в этой новости и убедись в их актуальности.
-        Особое внимание обрати на:
-        - Текущий статус политических фигур (президент, экспрезидент и т.д.)
-        - Актуальность дат и событий
-        - Корректность названий и терминов
-
-        Новость: {news_text}
-
-        {f"Контекст: {context}" if context else ""}
-
-        Верни анализ в формате JSON:
-        {{
-            "fact_check": {{
-                "accuracy_score": 0.0-1.0,
-                "issues_found": ["список проблем"],
-                "corrections": ["список исправлений"],
-                "verification_status": "verified|needs_check|incorrect"
-            }},
-            "current_context": {{
-                "key_figures_status": {{"имя": "текущий статус"}},
-                "recent_events": ["важные события"],
-                "breaking_news": "критичная информация"
-            }}
-        }}
-        """
+        prompts = load_prompts()
+        tmpl = prompts.get('facts', {}).get('verify_with_search', '')
+        context_block = f"Контекст: {context}" if context else ""
+        prompt = tmpl.format(news_text=news_text, context_block=context_block)
 
         try:
             # Если включен прямой вызов, используем базовую проверку
@@ -197,10 +175,26 @@ class GeminiProvider(LLMProvider):
             
             # Пытаемся парсить как JSON, если не получается - создаем структуру
             try:
-                fact_check_data = json.loads(result_text)
+                # Очистка markdown-оберток и извлечение JSON
+                text_clean = (result_text or '').strip()
+                logger.debug(f"Raw LLM response: {text_clean[:200]}...")
+                
+                if text_clean.startswith('```json'):
+                    text_clean = text_clean[7:]
+                if text_clean.endswith('```'):
+                    text_clean = text_clean[:-3]
+                
+                # Попытка извлечь первый JSON-объект
+                import re
+                m = re.search(r'\{[\s\S]*\}', text_clean)
+                json_candidate = m.group(0) if m else text_clean
+                logger.debug(f"JSON candidate: {json_candidate[:200]}...")
+                
+                fact_check_data = json.loads(json_candidate)
                 logger.info("✅ Получен JSON ответ от Google Search Grounding")
-            except json.JSONDecodeError:
-                logger.info("📝 Получен текстовый ответ от Google Search Grounding, создаем структуру")
+            except Exception as e:
+                logger.warning(f"Ошибка парсинга JSON от LLM: {e}")
+                logger.info("📝 Создаем структуру на основе текстового ответа")
                 # Создаем структуру на основе текстового ответа и grounding данных
                 accuracy_score = 0.8 if grounding_data['chunks'] else 0.5
                 fact_check_data = {
@@ -208,8 +202,9 @@ class GeminiProvider(LLMProvider):
                         'accuracy_score': accuracy_score,
                         'verification_status': 'verified' if grounding_data['chunks'] else 'needs_check',
                         'corrections': self._extract_corrections_from_text(result_text),
-                        'verified_facts': result_text[:500],  # Первые 500 символов как проверенные факты
-                        'confidence': 'high' if grounding_data['chunks'] else 'medium'
+                        'verified_facts': (result_text or '')[:500],
+                        'confidence': 'high' if grounding_data['chunks'] else 'medium',
+                        'issues_found': []
                     }
                 }
 
@@ -261,29 +256,9 @@ class GeminiProvider(LLMProvider):
 
     def _basic_fact_check(self, news_text: str, context: str = "") -> Dict[str, Any]:
         """Базовая проверка фактов без Google Search Grounding"""
-        prompt = f"""
-        Ты эксперт по проверке фактов. Проанализируй новость на точность и актуальность.
-        
-        ЗАДАЧА: Найди фактические ошибки в тексте, особенно:
-        - Неправильные или устаревшие политические титулы и должности
-        - Устаревшую информацию о текущих событиях
-        - Логические противоречия
-        - Неточности в датах и временных рамках
-        
-        КОНТЕКСТ: Текущий год - 2025. Проверь актуальность всей информации.
-        
-        ТЕКСТ: {news_text}
-        
-        Верни ТОЛЬКО JSON (без markdown, без комментариев):
-        {{
-            "fact_check": {{
-                "accuracy_score": 0.9,
-                "issues_found": ["найденная проблема"],
-                "corrections": ["правильная информация"],
-                "verification_status": "verified"
-            }}
-        }}
-        """
+        prompts = load_prompts()
+        tmpl = prompts.get('facts', {}).get('basic_fact_check', '')
+        prompt = tmpl.format(news_text=news_text)
 
         try:
             # Если включен прямой вызов, используем его
@@ -376,27 +351,10 @@ class GeminiProvider(LLMProvider):
             {chr(10).join(f"- {correction}" for correction in fact_check['fact_check']['corrections'])}
             """
 
-        prompt = f"""
-        Summarize the following news into a clear, neutral, and informative script for a short video.
-
-        Requirements:
-        - Language: English, for an international audience
-        - Style: professional, factual, neutral, news-report tone
-        - Length: 400–600 characters (about 4–6 sentences)
-        - Must cover: WHO, WHAT, WHEN, WHERE, WHY, and IMPACT
-        - If the news contains a direct quote, include it exactly as written and in quotation marks
-        - Focus on the main thesis of the news, avoid speculation or misleading interpretation
-        - Provide necessary context and significance in a concise way
-        - Write in complete sentences, with smooth narrative flow
-        - No abbreviations, no subjective language, no cut-off sentences
-        - No emojis, no hashtags, no social media style
-
-        {corrections_text}
-
-        News: {text}
-
-        Final factual short video summary in English:
-        """
+        prompts = load_prompts()
+        tmpl = prompts.get('content', {}).get('summarize_for_video', '')
+        base_prompt = tmpl.format(text=text)
+        prompt = base_prompt.replace('News:', f"{corrections_text}\n\n        News:")
 
         try:
             if self.force_direct_api:
@@ -523,7 +481,12 @@ class GeminiProvider(LLMProvider):
             # Проверяем, что result - это словарь
             if not isinstance(result, dict):
                 logger.warning(f"LLM вернул не словарь в generate_seo_package: {type(result)}")
-                return self._fallback_seo_package(text)
+                # Если это список, попробуем взять первый элемент
+                if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+                    result = result[0]
+                    logger.info("Используем первый элемент из списка")
+                else:
+                    return self._fallback_seo_package(text)
 
             # Валидация и пост-обработка
             title = (result.get('title') or '').strip()
@@ -639,41 +602,15 @@ class GeminiProvider(LLMProvider):
             {chr(10).join(f"- {correction}" for correction in fact_check['fact_check']['corrections'])}
             """
 
-        prompt = f"""
-        Create structured content for YouTube Shorts animation based on the news.
-        Return JSON in format:
-        {{
-            "header": {{
-                "text": "Brief title for the top part - IN ENGLISH",
-                "animation": "fadeIn",
-                "duration": 1.5
-            }},
-            "body": {{
-                "text": "Main news text - IN ENGLISH",
-                "animation": "typewriter",
-                "duration": 2.5
-            }},
-            "footer": {{
-                "source": "News source",
-                "date": "Date in DD.MM.YYYY format",
-                "animation": "slideUp",
-                "duration": 1.0
-            }},
-            "style": {{
-                "theme": "dark|light",
-                "accent_color": "#HEX_COLOR",
-                "font_size": "medium"
-            }}
-        }}
-
-        {corrections_text}
-
-        Исходная новость:
-        Заголовок: {news_data.get('title', '')}
-        Описание: {news_data.get('description', '')}
-        Источник: {news_data.get('source', '')}
-        Дата: {news_data.get('published', '')}
-        """
+        prompts = load_prompts()
+        tmpl = prompts.get('content', {}).get('structured_animation', '')
+        prompt = tmpl.format(
+            corrections_text=corrections_text,
+            title=news_data.get('title', ''),
+            description=news_data.get('description', ''),
+            source=news_data.get('source', ''),
+            published=news_data.get('published', '')
+        )
 
         try:
             if self.force_direct_api:
@@ -701,13 +638,18 @@ class GeminiProvider(LLMProvider):
                 except json.JSONDecodeError:
                     logger.warning(f"Не удалось парсить JSON в generate_structured_content: {text[:100]}...")
                     return self._fallback_structured_content(news_data)
+                
+                # Проверяем, что result - это словарь
+                if not isinstance(result, dict):
+                    logger.warning(f"LLM вернул не словарь в generate_structured_content: {type(result)}")
+                    # Если это список, попробуем взять первый элемент
+                    if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+                        result = result[0]
+                        logger.info("Используем первый элемент из списка")
+                    else:
+                        return self._fallback_structured_content(news_data)
             else:
                 # Fallback
-                return self._fallback_structured_content(news_data)
-
-            # Проверяем, что result - это словарь
-            if not isinstance(result, dict):
-                logger.warning(f"LLM вернул не словарь в generate_structured_content: {type(result)}")
                 return self._fallback_structured_content(news_data)
 
             # Валидация и дополнение данных
@@ -936,7 +878,16 @@ class LLMProcessor:
         }
 
         # Подготовка полного текста новости для анализа
-        full_text = f"{news_data.get('description', '')}"
+        # Используем полный контент статьи, если доступен, иначе описание
+        content = news_data.get('content', '')
+        description = news_data.get('description', '')
+        
+        if content and len(content) > len(description):
+            full_text = f"{news_data.get('title', '')}\n\n{content}"
+            logger.info(f"  📄 Используем полный текст статьи ({len(content)} символов)")
+        else:
+            full_text = f"{news_data.get('title', '')}\n\n{description}"
+            logger.info(f"  📄 Используем описание ({len(description)} символов)")
 
         # --- Проверка фактов (если включена) ---
         if self.provider.grounding_is_available:

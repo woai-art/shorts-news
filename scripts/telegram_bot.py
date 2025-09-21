@@ -59,9 +59,9 @@ class NewsTelegramBot:
         except Exception:
             pass
 
-        # Инициализация веб-парсера для обработки ссылок
-        from web_parser import WebParser
-        self.web_parser = WebParser(config_path)
+        # Инициализация движков новостных источников
+        from engines.registry import EngineRegistry
+        self.engine_registry = EngineRegistry()
 
         # Инициализация БД для пользовательских новостей
         self.db_path = os.path.join(self.project_path, 'data', 'user_news.db')
@@ -91,6 +91,7 @@ class NewsTelegramBot:
                     url TEXT UNIQUE,
                     title TEXT NOT NULL,
                     description TEXT,
+                    content TEXT,
                     published_date TEXT,
                     source TEXT,
                     content_type TEXT,
@@ -103,7 +104,12 @@ class NewsTelegramBot:
                     verification_status TEXT,
                     video_created INTEGER DEFAULT 0,
                     video_url TEXT,
-                    video_start_seconds REAL DEFAULT 0
+                    video_start_seconds REAL DEFAULT 0,
+                    username TEXT,
+                    images TEXT,
+                    videos TEXT,
+                    local_video_path TEXT,
+                    avatar_path TEXT
                 )
             ''')
 
@@ -132,18 +138,33 @@ class NewsTelegramBot:
             ''')
 
             conn.commit()
+        
         logger.info(f"Расширенная база данных новостей инициализирована: {self.db_path}")
 
-        # Миграция: добавить video_start_seconds, если его ещё нет
+        # Миграция: добавить недостающие столбцы
         try:
             with sqlite3.connect(self.db_path) as conn:
-                cols = {r[1] for r in conn.execute("PRAGMA table_info(user_news)")}
-                if 'video_start_seconds' not in cols:
-                    conn.execute('ALTER TABLE user_news ADD COLUMN video_start_seconds REAL DEFAULT 0')
-                    conn.commit()
-                    logger.info("🔧 Добавлен столбец video_start_seconds в user_news")
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(user_news)")
+                columns = {row[1] for row in cursor.fetchall()}
+                
+                migrations = {
+                    'video_start_seconds': 'REAL DEFAULT 0',
+                    'content': 'TEXT',
+                    'images': 'TEXT',
+                    'videos': 'TEXT',
+                    'local_video_path': 'TEXT',
+                    'avatar_path': 'TEXT'
+                }
+                
+                for col, col_type in migrations.items():
+                    if col not in columns:
+                        cursor.execute(f'ALTER TABLE user_news ADD COLUMN {col} {col_type}')
+                        logger.info(f"🔧 Добавлен столбец {col} в таблицу user_news")
+                
+                conn.commit()
         except Exception as e:
-            logger.warning(f"Не удалось выполнить миграцию video_start_seconds: {e}")
+            logger.warning(f"Не удалось выполнить миграцию базы данных: {e}")
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
@@ -303,8 +324,8 @@ class NewsTelegramBot:
             return
 
         try:
-            # Парсинг веб-страницы
-            parsed_data = await self.web_parser.parse_url(url)
+            # Парсинг веб-страницы через движки
+            parsed_data = await self._parse_url_with_engines(url)
 
             if not parsed_data or not parsed_data.get('title'):
                 logger.error(f"❌ Не удалось спарсить новость: {url}")
@@ -474,8 +495,8 @@ class NewsTelegramBot:
         )
 
         try:
-            # Парсинг веб-страницы
-            parsed_data = self.web_parser.parse_url(url)
+            # Парсинг веб-страницы через движки
+            parsed_data = self._parse_url_with_engines(url)
 
             if not parsed_data.get('success', False):
                 await update.message.reply_text(
@@ -564,14 +585,15 @@ class NewsTelegramBot:
                 # Сохранение основной информации о новости
                 cursor = conn.execute('''
                     INSERT INTO user_news (
-                        url, title, description, published_date, source,
+                        url, title, description, content, published_date, source,
                         content_type, user_id, chat_id, fact_check_score,
-                        verification_status, images, videos
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        verification_status, images, videos, username, local_video_path, avatar_path
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     news_data.get('url'),
                     news_data.get('title', 'Без заголовка'),
                     news_data.get('description', ''),
+                    news_data.get('content', ''),  # Добавляем полный контент статьи
                     news_data.get('published'),
                     news_data.get('source', 'Неизвестен'),
                     news_data.get('content_type', 'webpage'),
@@ -579,8 +601,11 @@ class NewsTelegramBot:
                     chat_id,
                     news_data.get('fact_verification', {}).get('accuracy_score'),
                     news_data.get('fact_verification', {}).get('verification_status'),
-                    ','.join(news_data.get('images', [])),
-                    ','.join(news_data.get('videos', []))
+                    '|'.join(news_data.get('images', [])),
+                    '|'.join(news_data.get('videos', [])),
+                    news_data.get('username', ''),  # Добавляем username для аватарки
+                    news_data.get('local_video_path', ''),  # Добавляем путь к локальному видео
+                    news_data.get('avatar_path', '')  # Добавляем путь к аватарке
                 ))
 
                 news_id = cursor.lastrowid
@@ -725,6 +750,14 @@ class NewsTelegramBot:
                 else:
                     news_dict['images'] = db_images
 
+                # Добавляем пути к локальным файлам медиа
+                if 'local_video_path' in news_dict and news_dict['local_video_path']:
+                    # Если есть локальное видео, добавляем его в список видео
+                    if news_dict['local_video_path'] not in news_dict['videos']:
+                        news_dict['videos'].append(news_dict['local_video_path'])
+                
+                # Аватарка уже доступна через news_dict['avatar_path']
+
                 # Получение источников проверки фактов
                 sources_cursor = conn.execute('''
                     SELECT source_url, source_title, confidence_score
@@ -765,32 +798,51 @@ class NewsTelegramBot:
             if 'published_date' in news_dict:
                 news_dict['published'] = news_dict['published_date']
             
-            # Обработка медиа из БД
+            # Обработка медиа из БД - сначала проверяем поле images в user_news
             if 'images' in news_dict and news_dict['images']:
-                news_dict['images'] = news_dict['images'].split(',') if news_dict['images'] else []
+                # Если есть изображения в поле images, используем их
+                if isinstance(news_dict['images'], str):
+                    # Разбиение по разделителю |
+                    news_dict['images'] = [url.strip() for url in news_dict['images'].split('|') if url.strip()]
+                else:
+                    news_dict['images'] = []
             else:
                 news_dict['images'] = []
                 
             if 'videos' in news_dict and news_dict['videos']:
-                news_dict['videos'] = news_dict['videos'].split(',') if news_dict['videos'] else []
+                # Умное разбиение URL видео - ищем полные URL
+                if isinstance(news_dict['videos'], str):
+                    # Разбиение по разделителю |
+                    news_dict['videos'] = [url.strip() for url in news_dict['videos'].split('|') if url.strip()]
+                else:
+                    news_dict['videos'] = []
             else:
                 news_dict['videos'] = []
             
-            # Получение изображений для новости
-            images_cursor = conn.execute('''
-                SELECT image_url, local_path, downloaded
-                FROM news_images
-                WHERE news_id = ?
-                ORDER BY id ASC
-            ''', (news_id,))
-            
-            news_dict['images'] = [
+            # Если нет изображений в поле images, получаем из таблицы news_images
+            if not news_dict['images']:
+                images_cursor = conn.execute('''
+                    SELECT image_url, local_path, downloaded
+                    FROM news_images
+                    WHERE news_id = ?
+                    ORDER BY id ASC
+                ''', (news_id,))
+                
+                news_dict['images'] = [
                 {
                     'url': img['image_url'],
                     'local_path': img['local_path'],
                     'downloaded': img['downloaded']
                 } for img in images_cursor.fetchall()
             ]
+            
+            # Добавляем пути к локальным файлам медиа (как в get_pending_news)
+            if 'local_video_path' in news_dict and news_dict['local_video_path']:
+                # Если есть локальное видео, добавляем его в список видео
+                if news_dict['local_video_path'] not in news_dict['videos']:
+                    news_dict['videos'].append(news_dict['local_video_path'])
+            
+            # Аватарка уже доступна через news_dict['avatar_path']
             
             return news_dict
 
@@ -843,6 +895,42 @@ class NewsTelegramBot:
 
         # Простой запуск без обработки исключений
         await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    def _parse_url_with_engines(self, url: str) -> Dict[str, Any]:
+        """Парсинг URL через движки новостных источников"""
+        try:
+            # Проверяем, может ли какой-то движок обработать URL
+            engine = self.engine_registry.get_engine_for_url(url)
+            if engine:
+                logger.info(f"🎯 Используем движок {engine.__class__.__name__} для URL: {url}")
+                result = engine.parse_url(url)
+                
+                # Преобразуем результат в формат, совместимый со старым web_parser
+                if result and result.get('title'):
+                    return {
+                        'success': True,
+                        'url': url,
+                        'title': result.get('title', ''),
+                        'description': result.get('description', ''),
+                        'content': result.get('content', ''),
+                        'published': result.get('published', ''),
+                        'source': result.get('source', ''),
+                        'author': result.get('author', ''),
+                        'username': result.get('username', ''),
+                        'images': result.get('images', []),
+                        'videos': result.get('videos', []),
+                        'content_type': result.get('content_type', '')
+                    }
+                else:
+                    logger.warning(f"❌ Движок {engine.__class__.__name__} не смог обработать URL: {url}")
+                    return {'success': False, 'url': url, 'error': 'Engine failed to parse'}
+            else:
+                logger.warning(f"❌ Нет подходящего движка для URL: {url}")
+                return {'success': False, 'url': url, 'error': 'No suitable engine found'}
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка парсинга URL через движки: {e}")
+            return {'success': False, 'url': url, 'error': str(e)}
 
 def create_systemd_service():
     """Создание systemd service файла для автозапуска бота"""

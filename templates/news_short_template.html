@@ -47,7 +47,8 @@
         <div class="brand-strip"><div class="brand-strip-text">Shorts NEWS</div></div>
         <div class="content-section">
             <div class="source-info">
-                <img src="{{SOURCE_LOGO}}" alt="Source" class="source-logo">
+                <img src="{{TWITTER_AVATAR}}" alt="Twitter Avatar" class="source-logo" id="twitterAvatar" style="display: none;">
+                <img src="{{SOURCE_LOGO}}" alt="Source" class="source-logo" id="sourceLogo">
                 <div class="source-text">{{SOURCE_NAME}}</div>
             </div>
             <div class="news-text" id="newsText">{{NEWS_BRIEF}}</div>
@@ -91,8 +92,16 @@
                 startZoomAnimation(newsImage);
             }
         }
+        function initializeTwitterAvatar() {
+            const twitterAvatar = document.getElementById('twitterAvatar');
+            const sourceLogo = document.getElementById('sourceLogo');
+            if (twitterAvatar && twitterAvatar.src && !twitterAvatar.src.endsWith('{{TWITTER_AVATAR}}')) {
+                twitterAvatar.style.display = 'block';
+                sourceLogo.style.display = 'none';
+            }
+        }
         function startZoomAnimation(el) { if (el) gsap.to(el, { scale: 1.15, duration: 5, ease: "power1.inOut" }); }
-        document.addEventListener('DOMContentLoaded', () => { adjustFontSize(); adjustMediaTitleSize(); initializeMedia(); });
+        document.addEventListener('DOMContentLoaded', () => { adjustFontSize(); adjustMediaTitleSize(); initializeMedia(); initializeTwitterAvatar(); });
     </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from logger_config import logger
 from scripts.llm_base import LLMProvider
+from scripts.prompt_loader import load_prompts, format_prompt
 
 class GeminiDirectProvider(LLMProvider):
     """Gemini провайдер с прямым HTTP вызовом"""
@@ -86,26 +87,10 @@ class GeminiDirectProvider(LLMProvider):
 
     def summarize_for_video(self, text: str) -> str:
         """Создание краткого текста для видео"""
-        prompt = f"""
-        Summarize the following news into a clear, neutral, and informative script for a short video. 
-
-        Requirements:
-        - Language: English, for an international audience
-        - Style: professional, factual, neutral, news-report tone
-        - Length: 400–600 characters (about 4–6 sentences)
-        - Must cover: WHO, WHAT, WHEN, WHERE, WHY, and IMPACT
-        - Ensure all political titles and positions are current and accurate for 2025
-        - If the news contains a direct quote, include it exactly as written and in quotation marks
-        - Focus on the main thesis of the news, avoid speculation or misleading interpretation
-        - Provide necessary context and significance in a concise way
-        - Write in complete sentences, with smooth narrative flow
-        - No abbreviations, no subjective language, no cut-off sentences
-
-        News: {text}
-
-        Final factual short video summary in English:
-        """
-    
+        prompts = load_prompts()
+        template = prompts.get('content', {}).get('summarize_for_video', '')
+        prompt = format_prompt(template, text=text)
+        
         result = self._call_gemini_api(prompt)
         if result:
             # Очищаем от лишних символов
@@ -134,41 +119,9 @@ class GeminiDirectProvider(LLMProvider):
 
     def generate_seo_package(self, text: str, source_url: str = "") -> Dict[str, Any]:
         """Генерация SEO пакета для YouTube Shorts"""
-        prompt = f"""TASK: Create YouTube Shorts SEO package for news content.
-
-OUTPUT FORMAT: JSON only, no explanations
-{{
-  "title": "...",
-  "description": "...",
-  "tags": ["...", "..."]
-}}
-
-TITLE RULES:
-- Maximum 65 characters
-- Clickbait style but factual
-- Start with action words or shocking facts
-- NO generic words like 'news', 'update', 'breaking'
-- Examples: 'Putin meets Trump at Alaska hotel', 'Bitcoin crashes 40% in single day', 'Ukraine captures Russian general'
-
-DESCRIPTION RULES:
-- 1-2 SHORT sentences maximum
-- Add context or key details not in title
-- Can be empty if title says everything
-- Include 5 relevant hashtags at the end with # symbol
-- ALWAYS add source link at the end: "Source: {source_url}"
-
-TAGS RULES:
-- Exactly 12-15 tags
-- Mix of: specific names, general topics, emotions, locations
-- Single words or short phrases (max 3 words)
-- NO '#' symbols
-- Include: relevant people names, countries, topics, trending keywords
-- Examples: ['putin', 'trump', 'politics', 'russia', 'america', 'meeting', 'diplomacy', 'world news', 'leadership', 'international', 'alaska', 'summit']
-
-SOURCE TEXT:
-{text}
-
-JSON:"""
+        prompts = load_prompts()
+        template = prompts.get('seo', {}).get('generate_seo_package', '')
+        prompt = format_prompt(template, text=text, source_url=source_url)
 
         result = self._call_gemini_api(prompt, temperature=0.3)
         if result:
@@ -193,40 +146,9 @@ JSON:"""
         text = news_data.get('description', '') or news_data.get('title', '')
         source_name = news_data.get('source', 'Unknown')
         
-        prompt = f"""
-        Create a complete news data package based on this article. Return ONLY valid JSON in this exact format:
-
-        {{
-            "content": {{
-                "title": "Concise, engaging title (max 80 characters)",
-                "summary": "Neutral, factual summary in professional news style (400-600 characters). If the main news contains important quotes, include them EXACTLY as written in quotation marks. Extract main points and avoid misleading interpretation.",
-                "key_points": ["main point 1", "main point 2", "main point 3"],
-                "quotes": [
-                    {{"text": "exact quote text", "speaker": "speaker name"}}
-                ]
-            }},
-            "seo": {{
-                "youtube_title": "SEO-optimized YouTube title (max 120 characters, can be 2-3 lines)",
-                "youtube_description": "YouTube description with hashtags and context (max 500 characters)",
-                "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-                "hashtags": ["#news", "#breaking", "#politics"],
-                "category": "News & Politics"
-            }},
-            "metadata": {{
-                "language": "en",
-                "confidence_score": 0.95
-            }}
-        }}
-
-        Requirements:
-        - Write in professional, neutral, factual tone
-        - Preserve important quotes EXACTLY as written
-        - Focus on WHO, WHAT, WHEN, WHERE, WHY, IMPACT
-        - No speculation or misleading interpretation
-        - Complete sentences only, no cut-offs
-
-        Article from {source_name}: {text}
-        """
+        prompts = load_prompts()
+        template = prompts.get('content', {}).get('complete_news_package', '')
+        prompt = format_prompt(template, text=text, source_name=source_name)
 
         result = self._call_gemini_api(prompt, temperature=0.3)
         if result:
@@ -273,8 +195,41 @@ JSON:"""
         
         # Возвращаем в старом формате для совместимости
         content = complete_package.get('content', {})
+        
+        # Очищаем заголовок от лишней технической информации
+        import re
+        title = content.get('title', '').strip()
+        
+        # Удаляем технические хвосты
+        cleanup_patterns = [
+            r"\s*-\s*Live Updates\s*-\s*POLITICO\s*$",
+            r"\s*\|\s*POLITICO\s*$",
+            r"\s*-\s*POLITICO\s*$",
+            r"\s*–\s*POLITICO\s*$",
+            r"\s*\(.*?\)\s*$",
+            r"\s*\[.*?\]\s*$",
+        ]
+        for pattern in cleanup_patterns:
+            title = re.sub(pattern, "", title, flags=re.IGNORECASE)
+        
+        # Удаляем запрещенные слова
+        banned_words = ["live updates", "explainer", "opinion", "analysis", "breaking", "news", "today", "update"]
+        for word in banned_words:
+            title = re.sub(rf"\b{re.escape(word)}\b", "", title, flags=re.IGNORECASE)
+        
+        # Удаляем разделители и лишние пробелы
+        title = re.sub(r"\s+\|\s+.*$", "", title)
+        title = re.sub(r"\s+", " ", title).strip().rstrip('.!')
+        
+        # Ограничиваем длину
+        if len(title) > 60:
+            cut = title[:60]
+            if ' ' in cut:
+                cut = cut[:cut.rfind(' ')]
+            title = cut
+        
         return {
-            "main_title": content.get('title', ''),
+            "main_title": title,
             "subtitle": content.get('summary', '')[:100] + ('...' if len(content.get('summary', '')) > 100 else ''),
             "key_points": content.get('key_points', []),
             "animation_style": "fade",

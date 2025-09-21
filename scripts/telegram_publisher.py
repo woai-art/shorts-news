@@ -246,6 +246,36 @@ class TelegramPublisher:
             logger.error(f"❌ Ошибка отправки статусного сообщения: {e}")
             return False
 
+    def send_message(self, message: str) -> bool:
+        """Синхронная отправка сообщения в канал"""
+        if not self.bot:
+            return False
+        
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(self._send_message_async(message))
+            loop.close()
+            return result
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки сообщения: {e}")
+            return False
+    
+    async def _send_message_async(self, message: str) -> bool:
+        """Асинхронная отправка сообщения"""
+        try:
+            await self.bot.send_message(
+                chat_id=self.target_chat,
+                text=message,
+                parse_mode='Markdown',
+                disable_notification=True
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка асинхронной отправки сообщения: {e}")
+            return False
+
     def is_available(self) -> bool:
         """Проверяет доступность Telegram Publisher"""
         return self.bot is not None and self.publish_config.get('enabled', True)
