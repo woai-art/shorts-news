@@ -51,7 +51,29 @@ class TwitterMediaManager(MediaManager):
         
         # Обновляем списки
         images = regular_images
-        videos = video_images
+        # Добавляем видео из images к существующим videos
+        videos = videos + video_images
+        
+        # Также проверяем videos на наличие локальных файлов
+        url_videos = []
+        local_videos = []
+        
+        logger.info(f"🔍 DEBUG: Обрабатываем {len(videos)} видео элементов:")
+        for i, vid in enumerate(videos):
+            logger.info(f"  [{i}] {vid}")
+            if vid.startswith('http'):
+                url_videos.append(vid)
+                logger.info(f"    → URL видео")
+            elif vid.endswith(('.mp4', '.mov', '.avi', '.mkv')):
+                local_videos.append(vid)
+                logger.info(f"    → Локальный файл")
+            else:
+                url_videos.append(vid)  # Оставляем как есть для дальнейшей обработки
+                logger.info(f"    → Неизвестный тип, добавляем как URL")
+        
+        # Объединяем URL видео и локальные видео
+        videos = url_videos + local_videos
+        logger.info(f"🔍 DEBUG: Итого видео: {len(videos)} (URL: {len(url_videos)}, локальные: {len(local_videos)})")
         
         logger.info(f"📸 Найдено {len(images)} изображений, {len(videos)} видео")
         
@@ -80,14 +102,28 @@ class TwitterMediaManager(MediaManager):
         news_data['images'] = images
         news_data['videos'] = videos
         
+        # Получаем данные пользователя
+        username = news_data.get('username', '')
+        avatar_url = news_data.get('avatar_url', '')
+        
+        # Скачиваем аватар пользователя для Twitter
+        avatar_path = None
+        if avatar_url:
+            logger.info(f"👤 Скачиваем аватар для @{username} по URL: {avatar_url}")
+            avatar_path = self._download_twitter_avatar(avatar_url, username)
+            if avatar_path:
+                logger.info(f"✅ Аватар скачан: {avatar_path}")
+            else:
+                logger.warning(f"❌ Не удалось скачать аватар для @{username}")
+        
         # Обрабатываем медиа самостоятельно для Twitter
-        result = self._process_twitter_media_directly(news_data)
+        result = self._process_twitter_media_directly(news_data, avatar_path)
         
         logger.info(f"🐦 Twitter медиа обработано: has_media={result.get('has_media', False)}")
         
         return result
     
-    def _process_twitter_media_directly(self, news_data: Dict) -> Dict:
+    def _process_twitter_media_directly(self, news_data: Dict, avatar_path: str = None) -> Dict:
         """
         Прямая обработка медиа для Twitter без использования базового класса
         
@@ -115,16 +151,6 @@ class TwitterMediaManager(MediaManager):
             username = news_data.get('username', '')
             avatar_url = news_data.get('avatar_url', '')
 
-            # Скачиваем аватар пользователя для Twitter
-            avatar_path = None
-            if avatar_url:
-                logger.info(f"👤 Скачиваем аватар для @{username} по URL: {avatar_url}")
-                avatar_path = self._download_twitter_avatar(avatar_url, username)
-                if avatar_path:
-                    logger.info(f"✅ Аватар скачан: {avatar_path}")
-                else:
-                    logger.warning(f"❌ Не удалось скачать аватар для @{username}")
-            
             # Обрабатываем изображения
             if images:
                 image_url = images[0]
@@ -140,27 +166,63 @@ class TwitterMediaManager(MediaManager):
                     })
                     logger.info(f"✅ Twitter изображение скачано: {local_image_path}")
             
-            # Обрабатываем видео
+            # Обрабатываем видео - сначала ищем локальные файлы
             if videos:
-                video_url = videos[0]
+                local_video_path = None
                 tweet_url = news_data.get('url', '')
                 
-                # Для Twitter видео сначала пробуем yt-dlp с URL твита
-                if tweet_url and ('twitter.com' in tweet_url or 'x.com' in tweet_url):
-                    logger.info(f"🎬 Скачиваем Twitter видео через yt-dlp: {tweet_url[:50]}...")
-                    local_video_path = self._download_twitter_video_with_ytdlp(tweet_url, news_data.get('title', 'Twitter Video'))
-                    
-                    # Если yt-dlp не сработал, пробуем Selenium с URL твита
-                    if not local_video_path:
-                        logger.info(f"🔄 yt-dlp не сработал, пробуем Selenium с URL твита: {tweet_url[:50]}...")
-                        local_video_path = self._download_twitter_video_selenium(tweet_url, news_data.get('title', 'Twitter Video'))
-                else:
-                    logger.info(f"🎬 Скачиваем Twitter видео напрямую: {video_url[:50]}...")
-                    local_video_path = self._download_twitter_video_direct(video_url, news_data.get('title', 'Twitter Video'))
+                # Сначала ищем локальные видео файлы
+                for video_item in videos:
+                    if video_item.endswith(('.mp4', '.mov', '.avi', '.mkv')):
+                        # Проверяем что файл существует
+                        if Path(video_item).exists():
+                            local_video_path = video_item
+                            logger.info(f"🎬 Найден существующий локальный видео файл: {local_video_path}")
+                            break
                 
-                # Если все еще не получилось, пробуем прямую загрузку только если это не thumbnail
-                if not local_video_path and not any(thumb in video_url.lower() for thumb in ['thumb', 'preview', 'poster']):
-                    local_video_path = self._download_twitter_video_direct(video_url, news_data.get('title', 'Twitter Video'))
+                # Если нашли локальный файл, устанавливаем результат
+                if local_video_path:
+                    result.update({
+                        'primary_video': local_video_path,
+                        'local_video_path': local_video_path,
+                        'has_media': True,
+                        'has_videos': True
+                    })
+                    logger.info(f"✅ Используем существующий локальный видео файл: {local_video_path}")
+                
+                # Если локального файла нет, скачиваем
+                if not local_video_path:
+                    video_url = None
+                    # Берем первый URL видео (не thumbnail)
+                    for video_item in videos:
+                        if video_item.startswith('http') and not any(thumb in video_item.lower() for thumb in ['thumb', 'preview', 'poster']):
+                            video_url = video_item
+                            break
+                    
+                    # Если не нашли подходящий URL, берем первый URL элемент
+                    if not video_url:
+                        for video_item in videos:
+                            if video_item.startswith('http'):
+                                video_url = video_item
+                                break
+                    
+                    if video_url:
+                        # Для Twitter видео сначала пробуем yt-dlp с URL твита
+                        if tweet_url and ('twitter.com' in tweet_url or 'x.com' in tweet_url):
+                            logger.info(f"🎬 Скачиваем Twitter видео через yt-dlp: {tweet_url[:50]}...")
+                            local_video_path = self._download_twitter_video_with_ytdlp(tweet_url, news_data.get('title', 'Twitter Video'))
+                            
+                            # Если yt-dlp не сработал, пробуем Selenium с URL твита
+                            if not local_video_path:
+                                logger.info(f"🔄 yt-dlp не сработал, пробуем Selenium с URL твита: {tweet_url[:50]}...")
+                                local_video_path = self._download_twitter_video_selenium(tweet_url, news_data.get('title', 'Twitter Video'))
+                        else:
+                            logger.info(f"🎬 Скачиваем Twitter видео напрямую: {video_url[:50]}...")
+                            local_video_path = self._download_twitter_video_direct(video_url, news_data.get('title', 'Twitter Video'))
+                        
+                        # Если все еще не получилось, пробуем прямую загрузку только если это не thumbnail
+                        if not local_video_path and video_url and not any(thumb in video_url.lower() for thumb in ['thumb', 'preview', 'poster']):
+                            local_video_path = self._download_twitter_video_direct(video_url, news_data.get('title', 'Twitter Video'))
                 
                 # Если ничего не сработало, пробуем скачать из videos массива
                 if not local_video_path and videos:
@@ -191,7 +253,7 @@ class TwitterMediaManager(MediaManager):
                 
                 if local_video_path:
                     result.update({
-                        'video_url': video_url,
+                        'video_url': video_url if 'video_url' in locals() else None,
                         'local_video_path': local_video_path,
                         'thumbnail': local_video_path,
                         'has_media': True,
@@ -202,9 +264,14 @@ class TwitterMediaManager(MediaManager):
                     logger.warning("❌ Не удалось скачать Twitter видео")
             
             # Добавляем аватар в результат
+            logger.info(f"🔍 DEBUG Avatar path: {avatar_path}")
             if avatar_path:
                 result['avatar_path'] = avatar_path
+                logger.info(f"🔍 DEBUG Avatar added to result: {result.get('avatar_path')}")
+            else:
+                logger.warning("🔍 DEBUG Avatar path is None, not adding to result")
             
+            logger.info(f"🔍 DEBUG Final result: {result}")
             return result
             
         except Exception as e:
@@ -339,9 +406,15 @@ class TwitterMediaManager(MediaManager):
         
         filtered_videos = []
         for video in videos:
-            url = normalize(video).lower()
-            if any(sub in url for sub in allowed_substrings):
+            # Проверяем, является ли это локальным файлом
+            if video.endswith(('.mp4', '.mov', '.avi', '.mkv')):
+                # Это локальный файл, добавляем без фильтрации
                 filtered_videos.append(video)
+            else:
+                # Это URL, применяем фильтрацию
+                url = normalize(video).lower()
+                if any(sub in url for sub in allowed_substrings):
+                    filtered_videos.append(video)
         
         return filtered_videos
     

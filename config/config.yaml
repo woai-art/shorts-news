@@ -22,7 +22,7 @@ news_parser:
 # Настройки LLM обработки
 llm:
   provider: "gemini"  # gemini, openai, anthropic
-  model: "models/gemini-2.0-flash"  # Используем самую продвинутую модель
+  model: "gemini-2.0-flash-001"  # Используем самую продвинутую модель
   api_key_env: "GEMINI_API_KEY"
   temperature: 0.7
   max_tokens: 2000
@@ -44,7 +44,7 @@ video:
   fps: 30
 
   sandbox_mode:
-    enabled: false
+    enabled: true
     template_path: "templates/news_short_template_sandbox.html"
 
   # Размеры секций видео (в долях от высоты)
@@ -129,7 +129,7 @@ youtube:
   privacy_status: "private"  # private, public, unlisted
   category_id: "25"  # News & Politics
   client_secret_file: "config/client_secret.json"
-  upload_enabled: true
+  upload_enabled: false
 
 # Telegram бот настройки для мониторинга
 telegram:

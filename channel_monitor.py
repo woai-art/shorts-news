@@ -605,32 +605,26 @@ class ChannelMonitor:
         try:
             logger.info(f"🚀 Запускаем обработку новости {news_id} с установленным смещением...")
             
-            # Импортируем и запускаем основной обработчик
-            import subprocess
+            # Импортируем и запускаем основной обработчик напрямую
             import sys
+            import os
+            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
             
-            # Запускаем process_news_by_id.py для обработки конкретной новости
-            result = subprocess.run([
-                sys.executable, "process_news_by_id.py", str(news_id)
-            ], capture_output=True, text=True, timeout=300)
+            from scripts.main_orchestrator import ShortsNewsOrchestrator
             
-            if result.returncode == 0:
+            # Создаем оркестратор
+            orchestrator = ShortsNewsOrchestrator('config/config.yaml')
+            orchestrator.initialize_components()
+            
+            # Обрабатываем новость
+            success = orchestrator.process_news_by_id(news_id)
+            
+            if success:
                 logger.info(f"✅ Новость {news_id} успешно обработана")
                 self.send_status_message(f"✅ Новость {news_id} обработана и загружена на YouTube!")
             else:
-                error_details = f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
-                logger.error(f"❌ Ошибка обработки новости {news_id}: {error_details}")
-                
-                # Manual error dump
-                with open('logs/error_dump.txt', 'w', encoding='utf-8') as f:
-                    f.write(f"--- Subprocess error for news_id {news_id} ---\n")
-                    f.write(error_details)
-
+                logger.error(f"❌ Ошибка обработки новости {news_id}")
                 self.send_status_message(f"❌ Ошибка обработки новости {news_id}")
-                
-        except subprocess.TimeoutExpired:
-            logger.error(f"❌ Таймаут обработки новости {news_id}")
-            self.send_status_message(f"❌ Таймаут обработки новости {news_id}")
         except Exception as e:
             logger.error(f"❌ Ошибка запуска обработки новости {news_id}: {e}")
             self.send_status_message(f"❌ Ошибка запуска обработки новости {news_id}")

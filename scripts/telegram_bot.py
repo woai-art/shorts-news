@@ -587,8 +587,8 @@ class NewsTelegramBot:
                     INSERT INTO user_news (
                         url, title, description, content, published_date, source,
                         content_type, user_id, chat_id, fact_check_score,
-                        verification_status, images, videos, username, local_video_path, avatar_path
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        verification_status, images, videos, username, avatar_url, local_video_path, avatar_path
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     news_data.get('url'),
                     news_data.get('title', 'Без заголовка'),
@@ -604,6 +604,7 @@ class NewsTelegramBot:
                     '|'.join(news_data.get('images', [])),
                     '|'.join(news_data.get('videos', [])),
                     news_data.get('username', ''),  # Добавляем username для аватарки
+                    news_data.get('avatar_url', ''),  # Добавляем URL аватарки
                     news_data.get('local_video_path', ''),  # Добавляем путь к локальному видео
                     news_data.get('avatar_path', '')  # Добавляем путь к аватарке
                 ))
@@ -841,6 +842,15 @@ class NewsTelegramBot:
                 # Если есть локальное видео, добавляем его в список видео
                 if news_dict['local_video_path'] not in news_dict['videos']:
                     news_dict['videos'].append(news_dict['local_video_path'])
+                    
+            # Добавляем локальные пути к изображениям если они есть
+            if 'local_image_path' in news_dict and news_dict['local_image_path']:
+                # Если есть локальное изображение, добавляем его в список изображений
+                if isinstance(news_dict['images'], list):
+                    if news_dict['local_image_path'] not in news_dict['images']:
+                        news_dict['images'].append(news_dict['local_image_path'])
+                else:
+                    news_dict['images'] = [news_dict['local_image_path']]
             
             # Аватарка уже доступна через news_dict['avatar_path']
             

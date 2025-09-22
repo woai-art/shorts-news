@@ -141,50 +141,48 @@ class GeminiDirectProvider(LLMProvider):
             "hashtags": ["#news", "#shorts"]
         }
 
-    def generate_complete_news_package(self, news_data: Dict) -> Dict[str, Any]:
-        """Генерация полного пакета данных для новости"""
+    def generate_video_package(self, news_data: Dict) -> Dict[str, Any]:
+        """Generates a complete video data package using a single prompt."""
         text = news_data.get('description', '') or news_data.get('title', '')
         source_name = news_data.get('source', 'Unknown')
-        
-        prompts = load_prompts()
-        template = prompts.get('content', {}).get('complete_news_package', '')
-        prompt = format_prompt(template, text=text, source_name=source_name)
+        source_url = news_data.get('url', '')
 
-        result = self._call_gemini_api(prompt, temperature=0.3)
+        prompts = load_prompts()
+        template = prompts.get('video_package', {}).get('generate', '')
+        prompt = format_prompt(template, text=text, source_name=source_name, source_url=source_url)
+
+        result = self._call_gemini_api(prompt, temperature=0.5)
         if result:
             try:
                 json_text = self._extract_json_from_text(result)
                 if json_text:
                     return json.loads(json_text)
             except json.JSONDecodeError as e:
-                logger.error(f"Ошибка парсинга JSON из ответа Gemini: {e}")
+                logger.error(f"Error parsing JSON from Gemini in generate_video_package: {e}")
+                # Если JSON не парсится, используем fallback
+                logger.info("Using fallback due to JSON parsing error")
+                return self._generate_fallback_video_package(news_data)
+        else:
+            # Если API не вернул результат, используем fallback
+            logger.info("Using fallback due to API error")
 
         # Fallback
-        return self._generate_fallback_package(news_data)
+        return self._generate_fallback_video_package(news_data)
 
-    def _generate_fallback_package(self, news_data: Dict) -> Dict[str, Any]:
-        """Создание fallback пакета когда LLM не работает"""
+    def _generate_fallback_video_package(self, news_data: Dict) -> Dict[str, Any]:
+        """Creates a fallback video package when the LLM fails."""
         title = news_data.get('title', 'News Update')
         description = news_data.get('description', '')
-        source = news_data.get('source', 'News Source')
-        
+
         return {
-            "content": {
-                "title": title[:80] + ('...' if len(title) > 80 else ''),
-                "summary": description[:400] + ('...' if len(description) > 400 else ''),
-                "key_points": [description[:100] + ('...' if len(description) > 100 else '')],
-                "quotes": []
+            "video_content": {
+                "title": title[:80],
+                "summary": description[:500]
             },
-            "seo": {
-                "youtube_title": title[:120] + ('...' if len(title) > 120 else ''),
-                "youtube_description": f"{description[:300]}... #news #breaking #{source.lower().replace(' ', '')}",
-                "tags": ["news", "breaking", "update", source.lower()],
-                "hashtags": ["#news", "#breaking", f"#{source.lower().replace(' ', '')}"],
-                "category": "News & Politics"
-            },
-            "metadata": {
-                "language": "en",
-                "confidence_score": 0.5
+            "seo_package": {
+                "youtube_title": title,
+                "youtube_description": f"{description[:200]}... #news #breaking",
+                "tags": ["news", "breaking", "update"]
             }
         }
 

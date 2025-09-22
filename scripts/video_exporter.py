@@ -199,139 +199,95 @@ class VideoExporter:
         """Деструктор для автоматического закрытия"""
         self.close()
 
-    def create_news_short_video(self, news_data: Dict, output_path: str) -> str:
-        """
-        Создает видео news short на основе нового шаблона
-        
-        Args:
-            news_data: Данные новости
-            output_path: Путь для сохранения видео
-            
-        Returns:
-            str: Путь к созданному видео или None при ошибке
-        """
+    def create_news_short_video(self, video_package: Dict, output_path: str) -> Optional[str]:
+        """Creates a news short video from a complete video package."""
         try:
-            # Создаем HTML файл для news short
-            temp_html_path = self._create_news_short_html(news_data)
+            temp_html_path = self._create_news_short_html(video_package)
             if not temp_html_path:
                 return None
             
-            # Конвертируем в абсолютный URI для браузера
             temp_html_uri = Path(os.path.abspath(temp_html_path)).as_uri()
-            
-            # Загружаем HTML в браузер
             self.driver.get(temp_html_uri)
+            time.sleep(3) # Wait for resources to load
             
-            # Ждем загрузки страницы и ресурсов
-            time.sleep(3)
-            
-            # Записываем анимацию в видео
             frames = self._capture_animation_frames()
-            
-            # Получаем музыку для передачи в экспортер
             music_path = self._get_background_music()
             fps = self.video_config.get('fps', 30)
 
-            # Используем fallback-метод, который умеет добавлять аудио
             self._export_frames_to_video_fallback(frames, output_path, fps, music_path)
-            video_path = output_path
             
-            # Очищаем временный файл
             if os.path.exists(temp_html_path):
                 os.remove(temp_html_path)
             
-            logger.info(f"News short видео создано: {video_path}")
-            return video_path
+            logger.info(f"News short video created: {output_path}")
+            return output_path
             
         except Exception as e:
-            logger.error(f"Ошибка при создании news short: {e}")
+            logger.error(f"Error creating news short: {e}", exc_info=True)
             return None
 
-    def _create_news_short_html(self, news_data: Dict) -> str:
-        """
-        Создает HTML файл для news short на основе нового шаблона
-        
-        Args:
-            news_data: Данные новости
-            
-        Returns:
-            str: Путь к созданному HTML файлу
-        """
+    def _create_news_short_html(self, video_package: Dict) -> Optional[str]:
+        """Creates the HTML file for the news short from the video package."""
         try:
-            # Проверяем режим песочницы
-            sandbox_mode_config = self.video_config.get('sandbox_mode', {})
-            is_sandbox = sandbox_mode_config.get('enabled', False)
-            
-            if is_sandbox:
-                template_path = sandbox_mode_config.get('template_path', "templates/news_short_template_sandbox.html")
-                logger.info(f"🏖️ РЕЖИМ ПЕСОЧНИЦЫ: используется шаблон {template_path}")
-            else:
-                template_path = "templates/news_short_template.html"
+            sandbox_enabled = self.video_config.get('sandbox_mode', {}).get('enabled', False)
+            template_name = 'news_short_template_sandbox.html' if sandbox_enabled else 'news_short_template.html'
+            logger.info(f"🔍 DEBUG Template selection: sandbox_enabled={sandbox_enabled}, template_name={template_name}")
+            template_path = os.path.join(self.paths_config['templates_dir'], template_name)
 
-            if not os.path.exists(template_path):
-                logger.error(f"Шаблон не найден: {template_path}")
-                return None
-                
             with open(template_path, 'r', encoding='utf-8') as f:
                 template_content = f.read()
             
-            # Определяем источник и логотип
-            source_name = self._extract_source_name(news_data.get('url', ''))
-            twitter_avatar_path = ''
-            source_logo_path = ''
-            if news_data.get('source', '').upper() == 'TWITTER':
-                twitter_avatar_path = self._get_twitter_avatar_path(news_data)
-            else:
-                source_logo_path = self._get_source_logo_path(source_name)
-            
-            # Получаем изображение новости
-            news_image_path = self._get_news_image(news_data)
-            
-            # Получаем видео новости (если есть)
-            news_video_path = self._get_news_video(news_data)
-            
-            # Получаем фоновую музыку
-            background_music_path = self._get_background_music()
-            
-            # Подготавливаем данные для подстановки
-            # Готовим имя источника
-            display_source_name = source_name
-            if news_data.get('source', '').upper() == 'TWITTER':
-                username = news_data.get('username', '')
-                if username:
-                    display_source_name = f"@{username}"
+            # Extract data from the video_package
+            content = video_package.get('video_content', {})
+            source_info = video_package.get('source_info', {})
+            media = video_package.get('media', {})
 
+            # Determine source name and logo/avatar
+            display_source_name = source_info.get('username', source_info.get('name', 'News'))
+            if '@' not in display_source_name and source_info.get('username'):
+                display_source_name = f"@{source_info['username']}"
+
+            twitter_avatar_path = source_info.get('avatar_path', '') if 'twitter' in source_info.get('name', '').lower() else ''
+            source_logo_path = source_info.get('avatar_path', '') if not twitter_avatar_path else ''
+
+            # Преобразуем пути в относительные для HTML
+            def to_relative_path(path):
+                if not path:
+                    return ''
+                # Заменяем обратные слеши на прямые и добавляем ../
+                return '../' + path.replace('\\', '/')
+            
             replacements = {
-                '{{NEWS_IMAGE}}': news_image_path or '../resources/default_backgrounds/news_default.jpg',
-                '{{NEWS_VIDEO}}': news_video_path or '',
-                '{{SOURCE_LOGO}}': source_logo_path,
-                '{{TWITTER_AVATAR}}': twitter_avatar_path,
+                '{{NEWS_IMAGE}}': to_relative_path(media.get('local_image_path', media.get('image_path', '../resources/default_backgrounds/news_default.jpg'))),
+                '{{NEWS_VIDEO}}': to_relative_path(media.get('local_video_path', media.get('video_path', ''))),
+                '{{SOURCE_LOGO}}': to_relative_path(source_logo_path),
+                '{{TWITTER_AVATAR}}': to_relative_path(twitter_avatar_path),
                 '{{SOURCE_NAME}}': display_source_name,
-                '{{NEWS_TITLE}}': (news_data.get('title', 'Заголовок новости')[:80] + ('...' if len(news_data.get('title', '')) > 80 else '')),
-                '{{NEWS_BRIEF}}': news_data.get('summary', news_data.get('description', ''))[:500] + ('...' if len(news_data.get('summary', news_data.get('description', ''))) > 500 else ''),
-                '{{PUBLISH_DATE}}': news_data.get('publish_date', 'Сегодня'),
-                '{{PUBLISH_TIME}}': news_data.get('publish_time', 'Сейчас'),
-                '{{BACKGROUND_MUSIC}}': background_music_path
+                '{{NEWS_TITLE}}': content.get('title', 'News Title'),
+                '{{NEWS_BRIEF}}': content.get('summary', 'News summary not available.'),
+                '{{PUBLISH_DATE}}': source_info.get('publish_date', 'Today'),
+                '{{BACKGROUND_MUSIC}}': self._get_background_music()
             }
             
-            # Выполняем подстановки
+            # Отладка
+            logger.info(f"🔍 DEBUG Template replacements:")
+            logger.info(f"  NEWS_IMAGE: {replacements['{{NEWS_IMAGE}}']}")
+            logger.info(f"  NEWS_VIDEO: {replacements['{{NEWS_VIDEO}}']}")
+            logger.info(f"  TWITTER_AVATAR: {replacements['{{TWITTER_AVATAR}}']}")
+            logger.info(f"  Media data: {media}")
+            
             html_content = template_content
             for placeholder, value in replacements.items():
-                html_content = html_content.replace(placeholder, str(value))
+                html_content = html_content.replace(placeholder, str(value or ''))
             
-            # Создаем временный HTML файл
-            temp_html_path = os.path.join(
-                self.paths_config.get('temp_dir', 'temp'),
-                f"news_short_{int(time.time())}.html"
-            )
-            
+            temp_html_path = os.path.join(self.paths_config.get('temp_dir', 'temp'), f"news_short_{int(time.time())}.html")
             with open(temp_html_path, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             
             return temp_html_path
             
         except Exception as e:
-            logger.error(f"Ошибка создания HTML: {e}")
+            logger.error(f"Error creating HTML for short: {e}", exc_info=True)
             return None
 
     def _extract_source_name(self, url: str) -> str:

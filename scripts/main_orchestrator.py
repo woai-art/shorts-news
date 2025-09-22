@@ -255,323 +255,145 @@ class ShortsNewsOrchestrator:
             logger.error(f"[ERROR] Ошибка обработки новости ID {news_id}: {e}")
             return False
 
-    def _process_single_news(self, news_data: Dict):
-        """Обработка одной новости"""
+    def _process_single_news(self, news_data: Dict) -> bool:
+        """Processes a single news item from raw data to a finished video."""
         news_id = news_data['id']
-        start_time = time.time()  # Время начала обработки для аналитики
-        logger.info(f"🎬 Обработка новости ID {news_id}: {news_data.get('title', '')[:50]}...")
+        logger.info(f"🎬 Processing news ID {news_id}: {news_data.get('title', '')[:50]}...")
 
         try:
-            # Шаг 3.1: LLM обработка
-            logger.info(f"  LLM обработка новости {news_id}...")
+            # Step 1: LLM Processing
             llm_result = self.llm_processor.process_news_for_shorts(news_data)
-
+            logger.info(f"🔍 DEBUG: llm_result = {llm_result}")
             if llm_result.get('status') == 'error':
-                logger.error(f"  Ошибка LLM обработки: {llm_result.get('error')}")
-                return
+                logger.error(f"  LLM processing failed: {llm_result.get('error')}")
+                return False
+            video_package = llm_result.get('video_package', {})
+            logger.info(f"🔍 DEBUG: video_package = {video_package}")
 
-            # Шаг 3.2: Подготовка данных для видео
-            
-            # Парсим дату публикации
-            publish_date = 'Сегодня'
-            publish_time = 'Сейчас'
-            
-            published_date = news_data.get('published', '') or news_data.get('publish_date', '')
-            if published_date:
-                try:
-                    from datetime import datetime
-                    if isinstance(published_date, str):
-                        # Сначала проверяем формат NBC News
-                        if 'GMT' in published_date or 'UTC' in published_date:
-                            # Формат NBC News: "Sept. 19, 2025, 11:18 AM GMT+3 / Updated Sept. 19, 2025, 7:33 PM GMT+3"
-                            try:
-                                # Убираем "Updated" часть и временную зону для парсинга
-                                date_without_updated = published_date.split(' / Updated')[0]
-                                date_without_tz = date_without_updated.split(' GMT')[0].split(' UTC')[0]
-                                logger.info(f"  🔍 DEBUG: Парсим дату NBC '{date_without_tz}'")
-                                # Пробуем разные форматы для NBC News
-                                try:
-                                    dt = datetime.strptime(date_without_tz, '%b. %d, %Y, %I:%M %p')
-                                except:
-                                    # Альтернативный формат без точки после месяца
-                                    dt = datetime.strptime(date_without_tz, '%b %d, %Y, %I:%M %p')
-                                logger.info(f"  ✅ DEBUG: Дата NBC успешно спарсена: {dt}")
-                            except Exception as e:
-                                logger.warning(f"  ❌ DEBUG: Ошибка парсинга NBC даты: {e}")
-                                dt = datetime.now()
-                        elif 'T' in published_date:  # ISO формат
-                            dt = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
-                        else:
-                            # Пробуем другие форматы
-                            try:
-                                dt = datetime.strptime(published_date, '%Y-%m-%d %H:%M:%S')
-                            except:
-                                try:
-                                    dt = datetime.strptime(published_date, '%Y-%m-%d')
-                                except:
-                                    # Если ничего не сработало, используем текущую дату
-                                    dt = datetime.now()
-                        
-                        publish_date = dt.strftime('%d.%m.%Y')
-                        publish_time = dt.strftime('%H:%M')
-                except Exception as e:
-                    logger.warning(f"  Не удалось распарсить дату '{published_date}': {e}")
-            
-            # Обработка медиа-данных
-            media_data = {}
-            has_media_for_header = False
-            try:
-                # Сначала проверяем, есть ли уже обработанные медиа в базе данных
-                if news_data.get('local_video_path') or news_data.get('image_paths'):
-                    logger.info(f"  Используются существующие медиа из БД для новости {news_id}")
-                    
-                    # Преобразуем image_paths из строки в список, если нужно
-                    image_paths = news_data.get('image_paths')
-                    if isinstance(image_paths, str):
-                        image_paths = [path.strip() for path in image_paths.split('|') if path.strip()]
-                    else:
-                        image_paths = image_paths or []
-
-                    media_data = {
-                        'has_media': True,
-                        'has_video': bool(news_data.get('local_video_path')),
-                        'local_video_path': news_data.get('local_video_path'),
-                        'has_images': bool(image_paths),
-                        'local_image_path': image_paths[0] if image_paths else None,
-                        'local_image_paths': image_paths,
-                        'avatar_path': news_data.get('avatar_path')
-                    }
-                    has_media_for_header = True
-                    logger.info(f"  📸 Медиа из БД: изображение={media_data['has_images']}, видео={media_data['has_video']}, has_media={has_media_for_header}")
-
-                elif news_data.get('images') or news_data.get('videos'):
-                    logger.info(f"  Запускаем полную обработку медиа для новости {news_id}")
-                    # Преобразуем строки в списки для медиа-данных
-                    processed_news_data = news_data.copy()
-                    if isinstance(news_data.get('images'), str):
-                        # Разбиение по разделителю |
-                        processed_news_data['images'] = [url.strip() for url in news_data['images'].split('|') if url.strip()]
-                        logger.info(f"  🔄 Преобразовано {len(processed_news_data['images'])} изображений из строки")
-                    if isinstance(news_data.get('videos'), str):
-                        # Разбиение по разделителю |
-                        processed_news_data['videos'] = [url.strip() for url in news_data['videos'].split('|') if url.strip()]
-                        logger.info(f"  🔄 Преобразовано {len(processed_news_data['videos'])} видео из строки")
-                    
-                    # Отладочная информация
-                    logger.info(f"  📸 Исходные изображения: {news_data.get('images', [])}")
-                    logger.info(f"  📸 Обработанные изображения: {processed_news_data.get('images', [])}")
-                    
-                    source = (news_data.get('source') or '').lower()
-                    if 'politico' in source:
-                        from engines.politico.politico_media_manager import PoliticoMediaManager
-                        media_manager = PoliticoMediaManager(self.config)
-                    elif 'washington' in source or 'washington post' in source:
-                        from engines.washingtonpost.washingtonpost_media_manager import WashingtonPostMediaManager
-                        media_manager = WashingtonPostMediaManager(self.config)
-                    elif 'twitter' in source:
-                        from engines.twitter.twitter_media_manager import TwitterMediaManager
-                        media_manager = TwitterMediaManager(self.config)
-                    elif 'nbc' in source or 'nbc news' in source:
-                        from engines.nbcnews.nbcnews_media_manager import NBCNewsMediaManager
-                        media_manager = NBCNewsMediaManager(self.config)
-                    else:
-                        from scripts.media_manager import MediaManager
-                        media_manager = MediaManager(self.config)
-                    media_result = media_manager.process_news_media(processed_news_data)
-                    media_data = media_result
-                    has_media_for_header = media_result.get('has_media', False)
-                    logger.info(f"  📸 Медиа обработано: изображение={bool(media_result.get('local_image_path'))}, видео={bool(media_result.get('local_video_path'))}, has_media={has_media_for_header}")
-            except Exception as e:
-                logger.warning(f"  ⚠️ Ошибка обработки медиа: {e}")
-            
-            # Проверка наличия медиа для шапки
-            if not has_media_for_header:
-                logger.warning(f"  ❌ Новость {news_id} не имеет медиа для шапки - бракуем видео")
-                self._send_media_rejection_notification(news_id, news_data)
-                self.stats['skipped_no_media'] = self.stats.get('skipped_no_media', 0) + 1
+            # Step 2: Media Processing
+            media_data = self._process_media_for_news(news_data)
+            if not media_data.get('has_media'):
+                logger.warning(f"  ❌ News item {news_id} has no usable media. Rejecting.")
                 return False
 
-            # Используем SEO заголовок от LLM вместо оригинального заголовка новости
-            seo_title = llm_result.get('seo_package', {}).get('title', '')
-            video_title = seo_title if seo_title else news_data.get('title', 'Breaking News')
-            
-            video_data = {
-                'title': video_title,  # SEO заголовок от LLM для видео
-                'description': news_data.get('description', ''),
-                'summary': llm_result.get('summary', llm_result.get('video_text', news_data.get('description', 'Brief news summary'))),
+            # Step 3: Enrich video_package with runtime data
+            video_package['media'] = media_data
+            video_package['source_info'] = {
+                'name': news_data.get('source', ''),
+                'username': news_data.get('username', ''),
                 'url': news_data.get('url', ''),
-                'source': news_data.get('source', ''),
-                'publish_date': publish_date,
-                'publish_time': publish_time,
-                'images': news_data.get('images', []),
-                'username': news_data.get('username', ''),  # Добавляем username для аватарки
-                'avatar_path': media_data.get('avatar_path'),  # Добавляем путь к аватару
-                **media_data  # Добавляем медиа-данные
+                'publish_date': self._parse_publish_date(news_data.get('published', '')),
+                'avatar_path': media_data.get('avatar_path')
             }
             
-            # Отладка: посмотрим, что возвращает LLM и что в исходных данных
-            logger.info(f"  Исходные данные: title='{news_data.get('title', '')[:50]}...', description='{news_data.get('description', '')[:50]}...'")
-            logger.info(f"  📅 Дата в исходных данных: published='{news_data.get('published', '')}', publish_date='{news_data.get('publish_date', '')}'")
-            logger.info(f"  📅 Спарсенная дата: {publish_date} {publish_time}")
-            logger.info(f"  LLM результат: title={bool(llm_result.get('title'))}, summary={bool(llm_result.get('summary'))}, video_text={bool(llm_result.get('video_text'))}")
-            if llm_result.get('video_text'):
-                logger.info(f"  LLM video_text: '{llm_result.get('video_text')[:100]}...'")
-            if llm_result.get('title'):
-                logger.info(f"  LLM title: '{llm_result.get('title')[:100]}...'")
-            logger.info(f"  Финальные данные для видео: title='{video_data['title'][:50]}...', summary='{video_data['summary'][:50]}...'")
-            
-            # Шаг 3.2.5: Валидация контента перед созданием видео
-            if not self._validate_content_quality(video_data, news_data):
-                logger.warning(f"  ⚠️ Контент новости {news_id} не прошел валидацию - пропускаем создание видео")
-                self.stats['skipped_low_quality'] = self.stats.get('skipped_low_quality', 0) + 1
-                return
+            # Отладка
+            logger.info(f"🔍 DEBUG Media data: {media_data}")
+            logger.info(f"🔍 DEBUG Source info: {video_package['source_info']}")
 
-            # Шаг 3.3: Экспорт видео с новым шаблоном
-            logger.info(f"  Экспорт видео для новости {news_id}...")
-            output_filename = f"short_{news_id}_{int(time.time())}.mp4"
-            output_path = os.path.join(self.config['paths']['outputs_dir'], output_filename)
-            
-            # Учет стартового смещения видеошапки, если задано в БД
-            try:
-                start_seconds = float(news_data.get('video_start_seconds') or 0)
-            except Exception:
-                start_seconds = 0.0
-            try:
-                self.video_exporter.header_video_start_seconds = start_seconds
-            except Exception:
-                pass
+            # Step 4: Content Quality Validation
+            if not self._validate_content_quality(video_package, news_data):
+                logger.warning(f"  ⚠️ Content for news {news_id} failed quality validation. Skipping.")
+                return False
 
-            video_path = self.video_exporter.create_news_short_video(video_data, output_path)
-
+            # Step 5: Video Export
+            video_path = self._export_video(news_id, video_package)
             if not video_path:
-                logger.error(f"  Ошибка экспорта видео для новости {news_id}")
-                self.stats['failed_videos'] += 1
-                return
+                return False
 
-            self.stats['successful_videos'] += 1
-            logger.info(f"  ✓ Видео создано: {video_path}")
+            # Step 6: YouTube Upload
+            self._upload_to_youtube(video_path, video_package)
 
-            # Шаг 3.4: Загрузка на YouTube
-            video_url = None
-            if self.youtube_uploader:
-                try:
-                    logger.info(f"  📤 Загружаем видео на YouTube...")
-                    
-                    # Подготавливаем метаданные для YouTube
-                    seo_package = llm_result.get('seo_package', {})
-                    
-                    # Определяем источник новости для плейлиста (соответствует вашим плейлистам)
-                    source_name = video_data.get('source', 'Unknown')
-                    if 'new york times' in source_name.lower() or 'nytimes' in source_name.lower():
-                        source_name = 'NYTIMES'
-                    elif 'politico' in source_name.lower():
-                        source_name = 'POLITICO'
-                    elif 'washington post' in source_name.lower():
-                        source_name = 'WASHINGTON POST'
-                    elif 'foxnews' in source_name.lower() or 'fox news' in source_name.lower():
-                        source_name = 'FOXNEWS'
-                    elif 'cnn' in source_name.lower():
-                        source_name = 'CNN'
-                    elif 'bbc' in source_name.lower():
-                        source_name = 'BBC'
-                    elif 'reuters' in source_name.lower():
-                        source_name = 'REUTERS'
-                    elif 'twitter' in source_name.lower() or 'x.com' in source_name.lower():
-                        source_name = 'TWITTER'
-                    else:
-                        # Берем первое слово из источника и делаем читаемое название
-                        first_word = source_name.split()[0] if source_name else 'OTHER'
-                        # Преобразуем в читаемый формат (например, "www.politico.com" -> "POLITICO")
-                        if '.' in first_word:
-                            clean_name = first_word.replace('www.', '').split('.')[0]
-                            source_name = clean_name.upper()
-                        else:
-                            source_name = first_word.upper()
-                    
-                    # Подготавливаем SEO описание для YouTube с обязательной ссылкой на источник
-                    seo_description = seo_package.get('description', '')
-                    source_url = video_data.get('url', '')
-                    
-                    # Формируем финальное описание для YouTube
-                    if seo_description:
-                        description = seo_description
-                    else:
-                        # Fallback: используем краткое содержание если SEO описания нет
-                        description = video_data.get('summary', '')[:200]  # Ограничиваем длину
-                    
-                    # Добавляем ссылку на источник (всегда)
-                    if source_url:
-                        if description:
-                            description += f"\n\nSource: {source_url}"
-                        else:
-                            description = f"Source: {source_url}"
-                    
-                    youtube_metadata = {
-                        'title': seo_package.get('title', video_data.get('title', 'Breaking News'))[:100],
-                        'description': description,
-                        'tags': seo_package.get('tags', ['news', 'politics', 'breaking news', 'shorts', 'usa politics']),
-                        'category_id': '25',  # News & Politics
-                        'privacy_status': 'private',  # Приватное для ручной проверки
-                        'source_name': source_name  # Для создания плейлиста
-                    }
-                    
-                    video_url = self.youtube_uploader.upload_video_with_metadata(video_path, youtube_metadata)
-                    
-                    if video_url:
-                        logger.info(f"  ✅ Видео загружено на YouTube: {video_url}")
-                        logger.info(f"  📂 Источник: {source_name} - видео добавлено в соответствующий плейлист")
-                        self.stats['uploaded_videos'] += 1
-                    else:
-                        logger.error(f"  ❌ Не удалось загрузить видео на YouTube")
-                        video_url = f"file://{video_path}"
-                        
-                except Exception as e:
-                    logger.error(f"  ❌ Ошибка загрузки на YouTube: {e}")
-                    video_url = f"file://{video_path}"
-            else:
-                logger.info(f"  ⚠️ YouTube Uploader не доступен")
-                video_url = f"file://{video_path}"
-            
-            # Шаг 3.5: Публикация в Telegram канал (ВРЕМЕННО ОТКЛЮЧЕНА)
-            logger.info(f"  📤 Публикация в Telegram временно отключена для фокуса на YouTube")
-            logger.info(f"  ✅ Видео готово: {os.path.basename(video_path)}")
-
-            # Шаг 3.6: Аналитика и обновление статуса
-            # Записываем аналитику
-            processing_time = time.time() - start_time
-            news_analytics_data = {
-                'title': news_data.get('title', ''),
-                'source': news_data.get('source', ''),
-                'category': llm_result.get('category', 'unknown'),
-                'language': llm_result.get('language', 'unknown')
-            }
-            self.analytics.record_news_processing(news_analytics_data, True, processing_time)
-
-            # Обновление статуса новости в Telegram боте
+            # Step 7: Finalize
             self.telegram_bot.mark_news_processed(news_id)
-            if video_url:
-                self.telegram_bot.mark_video_created(news_id, video_url)
-            logger.info(f"  ✓ Новость {news_id} отмечена как обработанная")
-            
+            logger.info(f"  ✓ News item {news_id} marked as processed.")
             return True
 
         except Exception as e:
-            logger.error(f"Ошибка обработки новости {news_id}: {e}")
-
-            # Записываем ошибку в аналитику
-            try:
-                processing_time = time.time() - start_time
-                news_analytics_data = {
-                    'title': news_data.get('title', ''),
-                    'source': news_data.get('source', ''),
-                    'category': 'error',
-                    'language': 'unknown'
-                }
-                self.analytics.record_news_processing(news_analytics_data, False, processing_time)
-            except:
-                pass  # Игнорируем ошибки аналитики
-            
+            logger.error(f"Critical error processing news {news_id}: {e}", exc_info=True)
             return False
+
+    def _parse_publish_date(self, published_date: str) -> str:
+        """Parses various date formats into a consistent string."""
+        from datetime import datetime
+        if not published_date:
+            return datetime.now().strftime('%d.%m.%Y')
+        try:
+            if 'GMT' in published_date or 'UTC' in published_date:
+                date_without_updated = published_date.split(' / Updated')[0]
+                date_without_tz = date_without_updated.split(' GMT')[0].split(' UTC')[0]
+                dt = datetime.strptime(date_without_tz, '%b. %d, %Y, %I:%M %p')
+            elif 'T' in published_date:
+                dt = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+            else:
+                dt = datetime.strptime(published_date, '%Y-%m-%d %H:%M:%S')
+            return dt.strftime('%d.%m.%Y')
+        except Exception:
+            return datetime.now().strftime('%d.%m.%Y')
+
+    def _process_media_for_news(self, news_data: Dict) -> Dict:
+        """Selects a media manager and processes media for the given news item."""
+        source = (news_data.get('source') or '').lower()
+        # This logic can be expanded to a more robust factory pattern
+        if 'politico' in source:
+            from engines.politico.politico_media_manager import PoliticoMediaManager
+            media_manager = PoliticoMediaManager(self.config)
+        elif 'washington' in source:
+            from engines.washingtonpost.washingtonpost_media_manager import WashingtonPostMediaManager
+            media_manager = WashingtonPostMediaManager(self.config)
+        elif 'twitter' in source:
+            from engines.twitter.twitter_media_manager import TwitterMediaManager
+            media_manager = TwitterMediaManager(self.config)
+        elif 'nbc' in source:
+            from engines.nbcnews.nbcnews_media_manager import NBCNewsMediaManager
+            media_manager = NBCNewsMediaManager(self.config)
+        else:
+            from scripts.media_manager import MediaManager
+            media_manager = MediaManager(self.config)
+        
+        return media_manager.process_news_media(news_data)
+
+
+    def _export_video(self, news_id: int, video_package: Dict) -> Optional[str]:
+        """Exports the video and returns the path."""
+        logger.info(f"  Exporting video for news {news_id}...")
+        output_filename = f"short_{news_id}_{int(time.time())}.mp4"
+        output_path = os.path.join(self.config['paths']['outputs_dir'], output_filename)
+        
+        video_path = self.video_exporter.create_news_short_video(video_package, output_path)
+        if not video_path:
+            logger.error(f"  Video export failed for news {news_id}")
+            self.stats['failed_videos'] += 1
+            return None
+        
+        self.stats['successful_videos'] += 1
+        logger.info(f"  ✓ Video created: {video_path}")
+        return video_path
+
+    def _upload_to_youtube(self, video_path: str, video_package: Dict):
+        """Uploads the video to YouTube if enabled."""
+        if not self.youtube_uploader:
+            logger.info("  YouTube Uploader is not available, skipping upload.")
+            return
+
+        logger.info("  📤 Uploading video to YouTube...")
+        seo_package = video_package.get('seo_package', {})
+        source_name = video_package.get('source_info', {}).get('name', 'Unknown')
+
+        youtube_metadata = {
+            'title': seo_package.get('youtube_title', 'News Update')[:100],
+            'description': seo_package.get('youtube_description', ''),
+            'tags': seo_package.get('tags', ['news', 'shorts']),
+            'category_id': '25',  # News & Politics
+            'privacy_status': 'private',
+            'source_name': source_name
+        }
+
+        video_url = self.youtube_uploader.upload_video_with_metadata(video_path, youtube_metadata)
+        if video_url:
+            logger.info(f"  ✅ Video uploaded to YouTube: {video_url}")
+            self.stats['uploaded_videos'] += 1
+        else:
+            logger.error("  ❌ YouTube upload failed.")
 
     def _send_media_rejection_notification(self, news_id: int, news_data: Dict):
         """Отправляет уведомление о браковке видео из-за отсутствия медиа"""
@@ -689,9 +511,10 @@ class ShortsNewsOrchestrator:
         """Валидация качества контента перед созданием видео"""
         logger.info("🔍 Валидация качества контента...")
         
-        # Проверяем основные поля
-        title = video_data.get('title', '').strip()
-        summary = video_data.get('summary', '').strip()
+        # Проверяем основные поля - извлекаем из video_content
+        video_content = video_data.get('video_content', {})
+        title = video_content.get('title', '').strip()
+        summary = video_content.get('summary', '').strip()
         description = video_data.get('description', '').strip()
         
         # Список проблем

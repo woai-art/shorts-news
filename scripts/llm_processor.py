@@ -19,8 +19,7 @@ from scripts.prompt_loader import load_prompts, format_prompt
 
 # Оставляем только новый SDK
 try:
-    from google import genai
-    from google.genai import types
+    import google.generativeai as genai
     USE_NEW_SDK = True
     logger.info("Используется новый Google AI SDK (genai)")
 except ImportError:
@@ -29,686 +28,49 @@ except ImportError:
 
 
 class GeminiProvider(LLMProvider):
-    """Провайдер для Google Gemini"""
+    """Provider for the Google Gemini API using the new SDK."""
 
-    def __init__(self, api_key: str, model: str = "models/gemini-2.0-flash", config: Dict = None):
+    def __init__(self, api_key: str, model: str = "models/gemini-1.5-flash", config: Dict = None):
         self.api_key = api_key
         self.model_name = model
         self.config = config or {}
-        self.direct_provider = None
-        self.grounding_config = self.config.get('grounding', {})
-        
-        # Устанавливаем grounding_is_available для всех путей
-        self.grounding_is_available = self.grounding_config.get('enable_fact_checking', False)
-        
-        # Устанавливаем force_direct_api для всех путей
-        self.force_direct_api = self.config.get('force_direct_api', False)
-
-        if self.force_direct_api:
-            logger.info("⚡ Используется прямой API вызов (force_direct_api: true)")
-            self.direct_provider = GeminiDirectProvider(api_key=self.api_key, model=self.model_name, config=self.config)
-            if self.grounding_is_available:
-                logger.info("✅ Google Search Grounding доступен (через прямой API)")
-            else:
-                logger.info("✅ Google Search Grounding отключен в конфигурации")
-        else:
-            # Инициализируем SDK
-            self._initialize_sdk(api_key)
-            self.model = self.model_name  # Для совместимости
-            logger.info("✅ Gemini инициализирован с SDK")
-            if self.grounding_is_available:
-                 logger.info("✅ Google Search Grounding доступен")
-            else:
-                logger.info("✅ Google Search Grounding отключен в конфигурации")
+        self.client = None
+        self._initialize_sdk(api_key)
 
     def _initialize_sdk(self, api_key: str):
         try:
-            # Принудительно используем Google AI Studio вместо Vertex AI
-            import os
-            os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'False'
-            logger.info("🔧 Установили GOOGLE_GENAI_USE_VERTEXAI=False для использования AI Studio")
-            
-            # Инициализируем клиент для Google AI Studio
-            self.client = genai.Client(api_key=api_key)
-            
-            # Базовая конфигурация
-            self.generation_config = types.GenerateContentConfig(
-                temperature=self.config.get('temperature', 0.7),
-                max_output_tokens=self.config.get('max_tokens', 2000),
-            )
-            
-            # Конфигурация с Google Search Grounding
-            if self.grounding_is_available:
-                self.grounding_config = types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=self.config.get('grounding', {}).get('grounding_temperature', 0.3),
-                )
-                logger.info("✅ Google Search Grounding (проверка фактов) доступен через SDK.")
-            else:
-                self.grounding_config = None
+            genai.configure(api_key=api_key)
+            logger.info(f"Gemini API configured successfully.")
         except Exception as e:
-            logger.error(f"⚠️ Ошибка инициализации SDK genai: {e}. Переключаемся на прямой API.")
-            self.force_direct_api = True
-            self._initialize_direct_provider(self.api_key, self.model_name, self.config)
+            logger.error(f"Failed to configure Gemini API: {e}")
+            raise
 
-    def _initialize_direct_provider(self, api_key, model, config):
-        """Инициализация прямого API провайдера"""
-        try:
-            self.direct_provider = GeminiDirectProvider(api_key, model, config)
-        except Exception as e:
-            logger.error(f"❌ Ошибка инициализации прямого API: {e}")
-            self.direct_provider = None
-
-    def _verify_facts_with_search(self, news_text: str, context: str = "") -> Dict[str, Any]:
-        """Проверка фактов через Google Search Grounding"""
-        # Временно отключаем проверку фактов для тестирования
-        logger.info("Проверка фактов временно отключена для тестирования")
-        return {
-            'fact_check': {
-                'accuracy_score': 1.0,
-                'issues_found': [],
-                'corrections': [],
-                'verification_status': 'skipped'
-            },
-            'grounding_data': {'chunks': [], 'supports': []},
-            'verification_sources': []
-        }
-
-        # Если нет поддержки grounding, используем базовую проверку
-        if not self.force_direct_api and (not USE_NEW_SDK or not self.grounding_config):
-            logger.info("Google Search Grounding недоступен, используем базовую проверку")
-            return self._basic_fact_check(news_text, context)
+    def generate_video_package(self, news_data: Dict) -> Dict[str, Any]:
+        """Generates a complete video data package using a single prompt via the SDK Client."""
+        text = news_data.get('description', '') or news_data.get('title', '')
+        source_name = news_data.get('source', 'Unknown')
+        source_url = news_data.get('url', '')
 
         prompts = load_prompts()
-        tmpl = prompts.get('facts', {}).get('verify_with_search', '')
-        context_block = f"Контекст: {context}" if context else ""
-        prompt = tmpl.format(news_text=news_text, context_block=context_block)
+        template = prompts.get('video_package', {}).get('generate', '')
+        prompt = format_prompt(template, text=text, source_name=source_name, source_url=source_url)
 
         try:
-            # Если включен прямой вызов, используем базовую проверку
-            if self.force_direct_api:
-                logger.info("Используем базовую проверку фактов (прямой API)")
-                return self._basic_fact_check(news_text, context)
+            model = genai.GenerativeModel(self.model_name)
+            response = model.generate_content(prompt)
             
-            # Используем правильный API согласно спецификации
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=self.grounding_config
-            )
-
-            # Извлекаем grounding данные для проверки источников
-            grounding_data = {
-                'chunks': [],
-                'supports': [],
-                'search_entry_point': None
-            }
-
-            if hasattr(response.candidates[0], 'grounding_metadata'):
-                metadata = response.candidates[0].grounding_metadata
-                if metadata.grounding_chunks:
-                    grounding_data['chunks'] = [
-                        {
-                            'title': chunk.web.title,
-                            'uri': chunk.web.uri,
-                            'content': getattr(chunk.web, 'snippet', '')
-                        } for chunk in metadata.grounding_chunks
-                    ]
-                if metadata.grounding_supports:
-                    grounding_data['supports'] = [
-                        {
-                            'confidence_scores': support.confidence_scores,
-                            'segment': {
-                                'start_index': support.segment.start_index,
-                                'end_index': support.segment.end_index,
-                                'text': support.segment.text
-                            } if support.segment else None
-                        } for support in metadata.grounding_supports
-                    ]
-
-            # Обрабатываем parts как список
-            parts = response.candidates[0].content.parts
-            if isinstance(parts, list):
-                result_text = parts[0].text
+            # Use regex to find the JSON block
+            import re
+            match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            if match:
+                json_text = match.group(0)
+                return json.loads(json_text)
             else:
-                result_text = parts.text
-            
-            # Пытаемся парсить как JSON, если не получается - создаем структуру
-            try:
-                # Очистка markdown-оберток и извлечение JSON
-                text_clean = (result_text or '').strip()
-                logger.debug(f"Raw LLM response: {text_clean[:200]}...")
-                
-                if text_clean.startswith('```json'):
-                    text_clean = text_clean[7:]
-                if text_clean.endswith('```'):
-                    text_clean = text_clean[:-3]
-                
-                # Попытка извлечь первый JSON-объект
-                import re
-                m = re.search(r'\{[\s\S]*\}', text_clean)
-                json_candidate = m.group(0) if m else text_clean
-                logger.debug(f"JSON candidate: {json_candidate[:200]}...")
-                
-                fact_check_data = json.loads(json_candidate)
-                logger.info("✅ Получен JSON ответ от Google Search Grounding")
-            except Exception as e:
-                logger.warning(f"Ошибка парсинга JSON от LLM: {e}")
-                logger.info("📝 Создаем структуру на основе текстового ответа")
-                # Создаем структуру на основе текстового ответа и grounding данных
-                accuracy_score = 0.8 if grounding_data['chunks'] else 0.5
-                fact_check_data = {
-                    'fact_check': {
-                        'accuracy_score': accuracy_score,
-                        'verification_status': 'verified' if grounding_data['chunks'] else 'needs_check',
-                        'corrections': self._extract_corrections_from_text(result_text),
-                        'verified_facts': (result_text or '')[:500],
-                        'confidence': 'high' if grounding_data['chunks'] else 'medium',
-                        'issues_found': []
-                    }
-                }
-
-            # Проверяем порог точности
-            accuracy_score = fact_check_data.get('fact_check', {}).get('accuracy_score', 0.5)
-            if accuracy_score < self.config.get('grounding', {}).get('fact_check_threshold', 0.7):
-                logger.warning(f"Низкая точность фактов: {accuracy_score}")
-
-            return {
-                'fact_check': fact_check_data['fact_check'],
-                'grounding_data': grounding_data,
-                'verification_sources': grounding_data['chunks'],
-                'grounding_text': result_text  # Добавляем оригинальный текст
-            }
-
+                raise ValueError("No JSON object found in the response")
         except Exception as e:
-            logger.warning(f"Ошибка проверки фактов через Google Search: {e}")
-            return {
-                'fact_check': {
-                    'accuracy_score': 0.5,
-                    'issues_found': ['Не удалось проверить факты'],
-                    'corrections': [],
-                    'verification_status': 'needs_check'
-                },
-                'grounding_data': {'chunks': [], 'supports': []},
-                'verification_sources': []
-            }
-    
-    def _extract_corrections_from_text(self, text: str) -> List[str]:
-        """Извлекает исправления из текстового ответа"""
-        corrections = []
-        
-        # Простые паттерны для поиска исправлений
-        correction_patterns = [
-            r"действующий президент",
-            r"президент сша.*трамп",
-            r"трамп.*президент",
-            r"исправление",
-            r"на самом деле",
-            r"фактически"
-        ]
-        
-        import re
-        for pattern in correction_patterns:
-            if re.search(pattern, text, re.IGNORECASE):
-                corrections.append(f"Найдено исправление по паттерну: {pattern}")
-        
-        return corrections
+            logger.error(f"Error generating video package via SDK Client: {e}")
+            raise Exception(f"LLM API failed: {e}")
 
-    def _basic_fact_check(self, news_text: str, context: str = "") -> Dict[str, Any]:
-        """Базовая проверка фактов без Google Search Grounding"""
-        prompts = load_prompts()
-        tmpl = prompts.get('facts', {}).get('basic_fact_check', '')
-        prompt = tmpl.format(news_text=news_text)
-
-        try:
-            # Если включен прямой вызов, используем его
-            if self.force_direct_api and self.direct_provider:
-                response_text = self.direct_provider._call_gemini_api(prompt, temperature=0.3)
-                if not response_text:
-                    raise ValueError("Прямой вызов API не вернул результат для проверки фактов.")
-                # Убираем возможные markdown-обертки
-                if response_text.startswith('```json'):
-                    response_text = response_text[7:]
-                if response_text.endswith('```'):
-                    response_text = response_text[:-3]
-                result = json.loads(response_text.strip())
-
-            elif USE_NEW_SDK and hasattr(self, 'client') and self.client:
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.3,
-                        response_mime_type="application/json"
-                    )
-                )
-                # Обрабатываем parts как список
-                parts = response.candidates[0].content.parts
-                if isinstance(parts, list):
-                    text = parts[0].text.strip()
-                else:
-                    text = parts.text.strip()
-                result = json.loads(text)
-            else:
-                # Старый SDK
-                response = self.client.generate_content(
-                    prompt,
-                    generation_config=genai.GenerationConfig(
-                        temperature=0.3
-                    )
-                )
-                # Извлекаем JSON из ответа
-                text_response = response.text.strip()
-                # Убираем возможные markdown-обертки
-                if text_response.startswith('```json'):
-                    text_response = text_response[7:]
-                if text_response.endswith('```'):
-                    text_response = text_response[:-3]
-                result = json.loads(text_response.strip())
-
-            return {
-                'fact_check': result['fact_check'],
-                'grounding_data': {'chunks': [], 'supports': []},
-                'verification_sources': []
-            }
-
-        except Exception as e:
-            logger.warning(f"Ошибка базовой проверки фактов: {e}")
-            return {
-                'fact_check': {
-                    'accuracy_score': 0.5,
-                    'issues_found': ['Не удалось выполнить проверку'],
-                    'corrections': [],
-                    'verification_status': 'uncertain'
-                },
-                'grounding_data': {'chunks': [], 'supports': []},
-                'verification_sources': []
-            }
-
-    def summarize_for_video(self, text: str, context: str = "") -> str:
-        """Создание краткого текста для видео с проверкой фактов"""
-        
-        # Если используется прямой API, делегируем вызов
-        if self.force_direct_api and self.direct_provider:
-            return self.direct_provider.summarize_for_video(text)
-        
-        # Сначала проверяем факты
-        fact_check = self._verify_facts_with_search(text, context)
-
-        # Улучшаем промпт на основе проверки фактов
-        corrections_text = ""
-        if fact_check.get('fact_check', {}).get('issues_found'):
-            corrections_text = f"""
-            ОБЯЗАТЕЛЬНЫЕ ИСПРАВЛЕНИЯ (основаны на проверке фактов):
-            {chr(10).join(f"- {issue}" for issue in fact_check['fact_check']['issues_found'])}
-
-            ПРАВИЛЬНЫЕ ФАКТЫ:
-            {chr(10).join(f"- {correction}" for correction in fact_check['fact_check'].get('corrections', []))}
-            """
-        elif fact_check.get('fact_check', {}).get('corrections'):
-            corrections_text = f"""
-            ПРАВИЛЬНЫЕ ФАКТЫ (основаны на проверке фактов):
-            {chr(10).join(f"- {correction}" for correction in fact_check['fact_check']['corrections'])}
-            """
-
-        prompts = load_prompts()
-        tmpl = prompts.get('content', {}).get('summarize_for_video', '')
-        base_prompt = tmpl.format(text=text)
-        prompt = base_prompt.replace('News:', f"{corrections_text}\n\n        News:")
-
-        try:
-            if self.force_direct_api:
-                # Используем прямой API провайдер
-                return self.direct_provider.summarize_for_video(text)
-            elif USE_NEW_SDK and self.client:
-                # Используем новый SDK
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=self.generation_config
-                )
-                # Обрабатываем parts как список
-                parts = response.candidates[0].content.parts
-                if isinstance(parts, list):
-                    return parts[0].text.strip()
-                else:
-                    return parts.text.strip()
-            else:
-                # Fallback
-                return self._fallback_summarize(text)
-        except Exception as e:
-            logger.error(f"Ошибка при генерации текста для видео: {e}")
-            return self._fallback_summarize(text)
-
-    def _fallback_summarize(self, text: str) -> str:
-        """Резервный метод суммаризации"""
-        if len(text) <= 150:
-            return text
-        return text[:147] + "..."
-
-    def generate_seo_package(self, text: str, source_url: str = "") -> Dict[str, Any]:
-        """Генерация SEO пакета с проверкой фактов"""
-        
-        # Если используется прямой API, делегируем вызов
-        if self.force_direct_api and self.direct_provider:
-            return self.direct_provider.generate_seo_package(text, source_url)
-        
-        # Проверяем факты перед генерацией SEO
-        fact_check = self._verify_facts_with_search(text)
-
-        corrections_text = ""
-        if fact_check.get('fact_check', {}).get('issues_found'):
-            corrections_text = f"""
-            ВАЖНО: Учитывай эти исправления при генерации SEO контента:
-            {chr(10).join(f"- {issue}" for issue in fact_check['fact_check']['issues_found'])}
-            """
-        elif fact_check.get('fact_check', {}).get('corrections'):
-            corrections_text = f"""
-            ВАЖНО: Учитывай эти исправления при генерации SEO контента:
-            {chr(10).join(f"- {correction}" for correction in fact_check['fact_check']['corrections'])}
-            """
-
-        prompt = f"""
-        TASK: Create YouTube Shorts SEO package for international news content.
-
-        OUTPUT FORMAT: JSON only, no explanations
-        {{
-          "title": "...",
-          "description": "...",
-          "tags": ["...", "..."]
-        }}
-
-        TITLE RULES:
-        - Maximum 100 characters
-        - Clickbait style but factual
-        - Start with action words or shocking facts
-        - NO generic words like 'news', 'update', 'breaking'
-        - NO hashtags in title
-        - Examples: 'Putin meets Trump at Alaska hotel', 'Bitcoin crashes 40% in single day', 'Ukraine captures Russian general'
-
-        DESCRIPTION RULES:
-        - 1-2 SHORT sentences maximum
-        - Add context or key details not in title
-        - Can be empty if title says everything
-        - Include 5 relevant hashtags at the end with # symbol
-
-        TAGS RULES:
-        - Exactly 12-15 tags
-        - Mix of: specific names, general topics, emotions, locations
-        - Single words or short phrases (max 3 words)
-        - NO '#' symbols
-        - Include: relevant people names, countries, topics, trending keywords
-        - Examples: ['putin', 'trump', 'politics', 'russia', 'america', 'meeting', 'diplomacy', 'world news', 'leadership', 'international', 'alaska', 'summit']
-
-        {corrections_text}
-
-        SOURCE TEXT:
-        {text}
-
-        JSON:
-        """
-
-        try:
-            if self.force_direct_api:
-                # Используем прямой API провайдер
-                return self.direct_provider.generate_seo_package(text, source_url)
-            elif USE_NEW_SDK and self.client:
-                # Новый SDK
-                config = types.GenerateContentConfig(
-                    temperature=0.3,
-                    response_mime_type="application/json"
-                )
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=config
-                )
-                # Обрабатываем parts как список
-                parts = response.candidates[0].content.parts
-                if isinstance(parts, list):
-                    text = parts[0].text.strip()
-                else:
-                    text = parts.text.strip()
-                try:
-                    result = json.loads(text)
-                except json.JSONDecodeError:
-                    logger.warning(f"Не удалось парсить JSON в generate_seo_package: {text[:100]}...")
-                    return self._fallback_seo_package(text)
-            else:
-                # Fallback
-                return self._fallback_seo_package(text)
-
-            # Проверяем, что result - это словарь
-            if not isinstance(result, dict):
-                logger.warning(f"LLM вернул не словарь в generate_seo_package: {type(result)}")
-                # Если это список, попробуем взять первый элемент
-                if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
-                    result = result[0]
-                    logger.info("Используем первый элемент из списка")
-                else:
-                    return self._fallback_seo_package(text)
-
-            # Валидация и пост-обработка
-            title = (result.get('title') or '').strip()
-            if not title:
-                title = (text[:70] + '...') if len(text) > 70 else text
-
-            description = (result.get('description') or '').strip()
-            if len(description) > 280:
-                description = description[:279].rstrip() + '...'
-
-            tags = result.get('tags') or []
-            if isinstance(tags, str):
-                tags = [t.strip() for t in tags.split(',') if t.strip()]
-
-            # Минимум 5 тегов
-            base_tags = ['новини', 'news', 'shorts']
-            tags = list(dict.fromkeys([*tags, *base_tags]))[:15]
-            if len(tags) < 5:
-                tags += ['updates', 'video', 'world']
-                tags = tags[:15]
-
-            return {
-                'title': title,
-                'description': description,
-                'tags': tags,
-                'category': result.get('category', 'Новости'),
-                'fact_verification': fact_check['fact_check'],
-                'sources_used': fact_check['verification_sources']
-            }
-
-        except Exception as e:
-            logger.error(f"Ошибка при генерации SEO пакета через Gemini: {e}")
-            return self._fallback_seo_package(text)
-
-    def categorize_news(self, news_text: str) -> Dict[str, Any]:
-        """Категоризация новости"""
-        categories = ["politics", "business", "technology", "sports", "entertainment", "health", "science"]
-
-        prompt = f"""
-        Определи категорию для этой новости. Доступные категории: {', '.join(categories)}
-
-        Новость: {news_text}
-
-        Верни JSON в формате:
-        {{
-            "category": "основная_категория",
-            "confidence": 0.0-1.0,
-            "tags": ["тег1", "тег2", "тег3"],
-            "language": "язык_новости"
-        }}
-        """
-
-        try:
-            if USE_NEW_SDK:
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.3,
-                        response_mime_type="application/json"
-                    )
-                )
-                # Обрабатываем parts как список
-                parts = response.candidates[0].content.parts
-                if isinstance(parts, list):
-                    text = parts[0].text.strip()
-                else:
-                    text = parts.text.strip()
-                result = json.loads(text)
-            else:
-                response = self.client.generate_content(
-                    prompt,
-                    generation_config=genai.GenerationConfig(temperature=0.3)
-                )
-                text_response = response.text.strip()
-                if text_response.startswith('```json'):
-                    text_response = text_response[7:]
-                if text_response.endswith('```'):
-                    text_response = text_response[:-3]
-                result = json.loads(text_response.strip())
-
-            return result
-
-        except Exception as e:
-            logger.warning(f"Ошибка категоризации: {e}")
-            return {
-                "category": "general",
-                "confidence": 0.5,
-                "tags": ["news"],
-                "language": "unknown"
-            }
-
-    def generate_structured_content(self, news_data: Dict) -> Dict[str, Any]:
-        """Генерация структурированного контента для анимации с проверкой фактов"""
-        
-        # Если используется прямой API, делегируем вызов
-        if self.force_direct_api and self.direct_provider:
-            return self.direct_provider.generate_structured_content(news_data)
-        
-        # Проверяем факты для точности контента
-        news_text = f"{news_data.get('title', '')}. {news_data.get('description', '')}"
-        fact_check = self._verify_facts_with_search(news_text)
-
-        corrections_text = ""
-        if fact_check.get('fact_check', {}).get('issues_found'):
-            corrections_text = f"""
-            ВАЖНЫЕ ИСПРАВЛЕНИЯ ДЛЯ АНИМАЦИИ:
-            {chr(10).join(f"- {issue}" for issue in fact_check['fact_check']['issues_found'])}
-            """
-        elif fact_check.get('fact_check', {}).get('corrections'):
-            corrections_text = f"""
-            ВАЖНЫЕ ИСПРАВЛЕНИЯ ДЛЯ АНИМАЦИИ:
-            {chr(10).join(f"- {correction}" for correction in fact_check['fact_check']['corrections'])}
-            """
-
-        prompts = load_prompts()
-        tmpl = prompts.get('content', {}).get('structured_animation', '')
-        prompt = tmpl.format(
-            corrections_text=corrections_text,
-            title=news_data.get('title', ''),
-            description=news_data.get('description', ''),
-            source=news_data.get('source', ''),
-            published=news_data.get('published', '')
-        )
-
-        try:
-            if self.force_direct_api:
-                # Используем прямой API провайдер
-                return self.direct_provider.generate_structured_content(news_data)
-            elif USE_NEW_SDK and self.client:
-                # Новый SDK
-                config = types.GenerateContentConfig(
-                    temperature=0.5,
-                    response_mime_type="application/json"
-                )
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=config
-                )
-                # Обрабатываем parts как список
-                parts = response.candidates[0].content.parts
-                if isinstance(parts, list):
-                    text = parts[0].text.strip()
-                else:
-                    text = parts.text.strip()
-                try:
-                    result = json.loads(text)
-                except json.JSONDecodeError:
-                    logger.warning(f"Не удалось парсить JSON в generate_structured_content: {text[:100]}...")
-                    return self._fallback_structured_content(news_data)
-                
-                # Проверяем, что result - это словарь
-                if not isinstance(result, dict):
-                    logger.warning(f"LLM вернул не словарь в generate_structured_content: {type(result)}")
-                    # Если это список, попробуем взять первый элемент
-                    if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
-                        result = result[0]
-                        logger.info("Используем первый элемент из списка")
-                    else:
-                        return self._fallback_structured_content(news_data)
-            else:
-                # Fallback
-                return self._fallback_structured_content(news_data)
-
-            # Валидация и дополнение данных
-            if not result.get('footer', {}).get('date'):
-                # Парсим дату из published
-                published = news_data.get('published', '')
-                if isinstance(published, str) and 'T' in published:
-                    try:
-                        dt = datetime.fromisoformat(published.replace('Z', '+00:00'))
-                        result['footer']['date'] = dt.strftime('%d.%m.%Y')
-                    except:
-                        result['footer']['date'] = datetime.now().strftime('%d.%m.%Y')
-                else:
-                    result['footer']['date'] = datetime.now().strftime('%d.%m.%Y')
-
-            # Добавляем информацию о проверке фактов
-            result['fact_verification'] = fact_check['fact_check']
-            result['verification_sources'] = fact_check['verification_sources']
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Ошибка при генерации структурированного контента через Gemini: {e}")
-            return self._fallback_structured_content(news_data)
-
-    def _fallback_seo_package(self, text: str) -> Dict[str, Any]:
-        """Резервный SEO пакет при ошибке LLM"""
-        return {
-            'title': f"Breaking: {text[:40]}..." if len(text) > 40 else f"Breaking: {text}",
-            'description': '',
-            'tags': ['news', 'breaking', 'shorts', 'updates', 'video'],
-            'category': 'News & Politics'
-        }
-
-    def _fallback_structured_content(self, news_data: Dict) -> Dict[str, Any]:
-        """Резервный структурированный контент"""
-        return {
-            "header": {
-                "text": news_data.get('title', '')[:50] + "..." if len(news_data.get('title', '')) > 50 else news_data.get('title', ''),
-                "animation": "fadeIn",
-                "duration": 1.5
-            },
-            "body": {
-                "text": news_data.get('description', '')[:100] + "..." if len(news_data.get('description', '')) > 100 else news_data.get('description', ''),
-                "animation": "typewriter",
-                "duration": 2.5
-            },
-            "footer": {
-                "source": news_data.get('source', ''),
-                "date": datetime.now().strftime('%d.%m.%Y'),
-                "animation": "slideUp",
-                "duration": 1.0
-            },
-            "style": {
-                "theme": "dark",
-                "accent_color": "#FF6B35",
-                "font_size": "medium"
-            }
-        }
 
 class LLMProcessor:
     """Основной класс для обработки новостей через LLM"""
@@ -829,127 +191,31 @@ class LLMProcessor:
             raise ValueError(f"Неподдерживаемый LLM провайдер: {provider_name}")
 
     def process_news_for_shorts(self, news_data: Dict) -> Dict[str, Any]:
-        """Обработка новости для создания shorts контента с проверкой фактов"""
-        logger.info(f"Обработка новости: {news_data.get('title', '')[:50]}...")
+        """Processes news to create a complete video package."""
+        logger.info(f"Processing news item: {news_data.get('title', '')[:50]}...")
 
         try:
-            # Используем новый подход с полным пакетом данных
-            if hasattr(self.provider, 'generate_complete_news_package'):
-                logger.info("🚀 Используется новый метод полного пакета данных")
-                complete_package = self.provider.generate_complete_news_package(news_data)
-                
-                # Преобразуем в старый формат для совместимости
-                processed_data = {
+            # The provider is now expected to have a method that returns the complete package.
+            if hasattr(self.provider, 'generate_video_package'):
+                logger.info(f"Provider has generate_video_package method")
+                video_package = self.provider.generate_video_package(news_data)
+                logger.info(f"Generated video_package: {video_package}")
+                logger.info(f"Successfully generated video package for news ID {news_data.get('id')}")
+                return {
                     'status': 'success',
-                    'title': complete_package.get('content', {}).get('title', ''),
-                    'summary': complete_package.get('content', {}).get('summary', ''),
-                    'video_text': complete_package.get('content', {}).get('summary', ''),
-                    'seo_package': complete_package.get('seo', {}),
-                    'structured_content': complete_package,
-                    'fact_check': complete_package.get('metadata', {}).get('fact_check', None)
+                    'video_package': video_package
                 }
-                
-                logger.info(f"✅ Создан полный пакет данных с {complete_package.get('metadata', {}).get('confidence_score', 0):.1%} уверенности")
-                return processed_data
-            
-            # Fallback к старому методу
-            return self._process_news_legacy(news_data)
+            else:
+                # Fallback to legacy method if the new one is not implemented
+                logger.warning("Provider does not have 'generate_video_package', falling back to legacy processing.")
+                return self._process_news_legacy(news_data)
 
         except Exception as e:
-            logger.error(f"Ошибка обработки новости ID {news_data.get('id')}: {e}")
+            logger.error(f"Error processing news ID {news_data.get('id')}: {e}")
             return {
-                'news_id': news_data.get('id'),
                 'status': 'error',
                 'error': str(e),
-                'processed_at': datetime.now().isoformat()
             }
-
-    def _process_news_legacy(self, news_data: Dict) -> Dict[str, Any]:
-        """Старый метод обработки новостей (для совместимости)"""
-        # Инициализируем результат
-        processed_data = {
-            'status': 'success',
-            'title': '',
-            'summary': '',
-            'video_text': '',
-            'seo_package': {},
-            'structured_content': {},
-            'fact_check': None
-        }
-
-        # Подготовка полного текста новости для анализа
-        # Используем полный контент статьи, если доступен, иначе описание
-        content = news_data.get('content', '')
-        description = news_data.get('description', '')
-        
-        if content and len(content) > len(description):
-            full_text = f"{news_data.get('title', '')}\n\n{content}"
-            logger.info(f"  📄 Используем полный текст статьи ({len(content)} символов)")
-        else:
-            full_text = f"{news_data.get('title', '')}\n\n{description}"
-            logger.info(f"  📄 Используем описание ({len(description)} символов)")
-
-        # --- Проверка фактов (если включена) ---
-        if self.provider.grounding_is_available:
-            logger.info(f"Проверка фактов для новости {news_data.get('id', 'N/A')}...")
-            fact_check_result = self.provider._verify_facts_with_search(full_text)
-            processed_data['fact_check'] = fact_check_result
-
-        # Контекст для проверки фактов (источник, дата публикации)
-        context = f"""
-        Источник: {news_data.get('source', '')}
-        Дата публикации: {news_data.get('published', '')}
-        Категория: {news_data.get('category', '')}
-        """
-
-        # Генерация краткого текста для видео с проверкой фактов
-        try:
-            short_text = self.provider.summarize_for_video(full_text, context)
-            # Normalize roles/titles to avoid "former President Trump" kind of errors
-            short_text = self._fact_guard_normalize(short_text, news_data.get('published', ''))
-            logger.info(f"  ✅ LLM summarize_for_video результат: {len(short_text) if short_text else 0} символов")
-            processed_data['video_text'] = short_text
-            processed_data['summary'] = short_text  # Дублируем для совместимости
-        except Exception as e:
-            logger.error(f"  ❌ Ошибка summarize_for_video: {e}")
-            # Создаем краткое содержание из описания (первые 300 символов)
-            description = news_data.get('description', 'Brief news summary')
-            processed_data['video_text'] = description[:300] + ('...' if len(description) > 300 else '')
-            processed_data['summary'] = processed_data['video_text']
-
-        # Генерация SEO пакета с проверкой фактов
-        try:
-            source_url = news_data.get('url', '')
-            seo_package = self.provider.generate_seo_package(full_text, source_url)
-            logger.info(f"  ✅ LLM generate_seo_package результат: {bool(seo_package)}")
-            processed_data['seo_package'] = seo_package
-            if seo_package and 'title' in seo_package:
-                # Normalize title as well
-                processed_data['title'] = self._fact_guard_normalize(seo_package['title'], news_data.get('published', ''))
-                logger.info(f"  ✅ Сгенерированный заголовок: {processed_data['title'][:50]}...")
-            else:
-                # Создаем краткий заголовок из исходного (первые 60 символов)
-                original_title = news_data.get('title', 'Заголовок новости')
-                processed_data['title'] = original_title[:60] + ('...' if len(original_title) > 60 else '')
-        except Exception as e:
-            logger.error(f"  ❌ Ошибка generate_seo_package: {e}")
-            # Создаем краткий заголовок из исходного (первые 60 символов)
-            original_title = news_data.get('title', 'Заголовок новости')
-            processed_data['title'] = original_title[:60] + ('...' if len(original_title) > 60 else '')
-
-        # Генерация структурированного контента для анимации
-        try:
-            if hasattr(self.provider, 'generate_structured_content'):
-                structured_content = self.provider.generate_structured_content(news_data)
-                logger.info(f"  ✅ LLM generate_structured_content результат: {bool(structured_content)}")
-                processed_data['structured_content'] = structured_content
-        except Exception as e:
-            logger.error(f"  ❌ Ошибка generate_structured_content: {e}")
-            processed_data['structured_content'] = {}
-
-        # Возвращаем обработанные данные
-        logger.info(f"✅ Успешно обработана новость ID {news_data.get('id')} с проверкой фактов")
-        return processed_data
 
     def batch_process_news(self, news_list: List[Dict]) -> List[Dict]:
         """Пакетная обработка списка новостей"""
