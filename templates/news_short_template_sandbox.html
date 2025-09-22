@@ -26,7 +26,7 @@
         .source-info { display: flex; align-items: center; margin-bottom: 30px; flex-shrink: 0; }
         .source-logo { width: 64px; height: 64px; object-fit: contain; margin-right: 20px; }
         .source-text { font-family: 'Arsenal', sans-serif; font-size: 36px; font-weight: bold; color: #333; }
-        .news-text { font-family: 'Oswald', sans-serif; font-weight: 700; text-transform: uppercase; color: #1a1a1a; line-height: 1.4; width: 100%; flex-grow: 1; overflow: hidden; }
+        .news-text { color: #1a1a1a; line-height: 1.5; width: 100%; flex-grow: 1; overflow: hidden; }
 
         /* --- Футер --- */
         .footer-section { width: 100%; height: 200px; background-color: #ab6d4c; position: absolute; bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 40px; box-sizing: border-box; }
@@ -65,15 +65,14 @@
         function adjustFontSize() {
             const newsText = document.getElementById('newsText'), contentSection = document.querySelector('.content-section'), sourceInfo = document.querySelector('.source-info');
             if (!newsText || !contentSection || !sourceInfo) return;
-            const availableHeight = contentSection.offsetHeight - sourceInfo.offsetHeight - 40; // Reduced padding
-            let fontSize = 72; // Start with a larger font size
+            const availableHeight = contentSection.offsetHeight - sourceInfo.offsetHeight - 60;
+            const textLength = (newsText.textContent || newsText.innerText).length;
+            let fontSize = 48;
+            if (textLength > 200) fontSize = 42; if (textLength > 350) fontSize = 38; if (textLength > 500) fontSize = 34;
             newsText.style.fontSize = fontSize + 'px';
             let attempts = 0;
-            // Decrease font size until it fits
-            while (newsText.scrollHeight > availableHeight && fontSize > 20 && attempts < 50) {
-                fontSize--;
-                newsText.style.fontSize = fontSize + 'px';
-                attempts++;
+            while (newsText.scrollHeight > availableHeight && fontSize > 20 && attempts < 20) {
+                fontSize--; newsText.style.fontSize = fontSize + 'px'; attempts++;
             }
         }
         function adjustMediaTitleSize() {

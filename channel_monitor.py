@@ -37,7 +37,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/channel_monitor.log', encoding='utf-8'),
+        logging.FileHandler('logs/debug_monitor.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -483,6 +483,15 @@ class ChannelMonitor:
 
         except Exception as e:
             logger.error(f"Failed to process message {message_id}: {e}", exc_info=True)
+            # Manual error dump as a fallback
+            try:
+                import traceback
+                with open('logs/error_dump.txt', 'w', encoding='utf-8') as f:
+                    f.write(f"Error processing message {message_id}:\n")
+                    f.write(str(e) + "\n")
+                    f.write(traceback.format_exc())
+            except:
+                pass # Ignore errors in the error dumper
             self.send_status_message(f"❌ Error processing message: {e}")
 
     def send_video_start_request(self, news_id: int, news_data: dict):
@@ -609,7 +618,14 @@ class ChannelMonitor:
                 logger.info(f"✅ Новость {news_id} успешно обработана")
                 self.send_status_message(f"✅ Новость {news_id} обработана и загружена на YouTube!")
             else:
-                logger.error(f"❌ Ошибка обработки новости {news_id}: {result.stderr}")
+                error_details = f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+                logger.error(f"❌ Ошибка обработки новости {news_id}: {error_details}")
+                
+                # Manual error dump
+                with open('logs/error_dump.txt', 'w', encoding='utf-8') as f:
+                    f.write(f"--- Subprocess error for news_id {news_id} ---\n")
+                    f.write(error_details)
+
                 self.send_status_message(f"❌ Ошибка обработки новости {news_id}")
                 
         except subprocess.TimeoutExpired:
@@ -683,6 +699,44 @@ class ChannelMonitor:
             self.cleanup()
         except Exception:
             pass
+
+    def handle_sandbox_toggle(self, enabled: bool):
+        """Toggles the sandbox mode in the config file."""
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config_content = f.read()
+            
+            new_state = "true" if enabled else "false"
+            old_state = "false" if enabled else "true"
+            
+            # More robust regex pattern to handle different whitespaces
+            import re
+            old_pattern = re.compile(f"(sandbox_mode:\s*\n\s*enabled:\s*){old_state}")
+            new_pattern = f"\g<1>{new_state}"
+
+            if old_pattern.search(config_content):
+                new_config_content, count = old_pattern.subn(new_pattern, config_content, count=1)
+                if count > 0:
+                    with open(self.config_path, 'w', encoding='utf-8') as f:
+                        f.write(new_config_content)
+                    
+                    status_msg = f"✅ РЕЖИМ ПЕСОЧНИЦЫ {'ВКЛЮЧЕН' if enabled else 'ВЫКЛЮЧЕН'}. Перезапустите монитор командой /restart_monitor для применения."
+                    logger.info(status_msg)
+                    self.send_status_message(status_msg)
+                else:
+                    # This case should ideally not be reached if search was successful
+                    status_msg = f"⚠️ Не удалось изменить режим песочницы. Проверьте config.yaml."
+                    logger.warning(status_msg)
+                    self.send_status_message(status_msg)
+            else:
+                status_msg = f"⚠️ РЕЖИМ ПЕСОЧНИЦЫ уже был {'включен' if enabled else 'выключен'} или не найден в конфиге."
+                logger.warning(status_msg)
+                self.send_status_message(status_msg)
+
+        except Exception as e:
+            error_msg = f"❌ Ошибка при переключении режима песочницы: {e}"
+            logger.error(error_msg)
+            self.send_status_message(error_msg)
 
     def handle_stop_command(self, update: dict):
         """Handles the /stop_monitor command."""
@@ -762,6 +816,10 @@ class ChannelMonitor:
                             elif text == '/restart_monitor':
                                 self.handle_restart_command(update)
                                 return # execv replaces the process
+                            elif text == '/sandbox_on':
+                                self.handle_sandbox_toggle(True)
+                            elif text == '/sandbox_off':
+                                self.handle_sandbox_toggle(False)
                             
                             # Обработка команды /startat
                             if self.process_startat_command(message):

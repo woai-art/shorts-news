@@ -1,10 +1,10 @@
 {
   "start_date": "2025-08-30T19:44:06.359903",
-  "total_news": 280,
-  "processed_news": 271,
+  "total_news": 289,
+  "processed_news": 280,
   "failed_news": 9,
   "categories": {
-    "unknown": 271,
+    "unknown": 280,
     "error": 9
   },
   "sources": {
@@ -35,11 +35,11 @@
     "POLITICO": 27,
     "abcnews.go.com": 2,
     "WASHINGTON POST": 4,
-    "TWITTER": 33,
+    "TWITTER": 42,
     "NBC News": 15
   },
   "languages": {
-    "unknown": 280
+    "unknown": 289
   },
   "daily_stats": {
     "2025-08-30": {
@@ -393,7 +393,7 @@
       ]
     },
     "2025-09-21": {
-      "processed": 7,
+      "processed": 16,
       "failed": 0,
       "categories": {},
       "processing_times": [
@@ -403,13 +403,22 @@
         49.959839820861816,
         41.901641845703125,
         35.00458335876465,
-        72.96395301818848
+        72.96395301818848,
+        50.735037326812744,
+        44.8941605091095,
+        48.183648109436035,
+        56.17672896385193,
+        70.65943264961243,
+        74.40651249885559,
+        106.69119119644165,
+        63.27895426750183,
+        77.38339233398438
       ]
     }
   },
   "performance": {
-    "avg_processing_time": 68.5462744491441,
-    "success_rate": 0.9678571428571429,
-    "error_rate": 0.03214285714285714
+    "avg_processing_time": 68.46147371493409,
+    "success_rate": 0.9688581314878892,
+    "error_rate": 0.031141868512110725
   }
 }

@@ -43,6 +43,10 @@ video:
   duration_seconds: 6
   fps: 30
 
+  sandbox_mode:
+    enabled: false
+    template_path: "templates/news_short_template_sandbox.html"
+
   # Размеры секций видео (в долях от высоты)
   header_ratio: 0.35  # Медиа-шапка (изображение/видео)
   title_ratio: 0.15   # Заголовок новости
