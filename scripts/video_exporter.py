@@ -136,21 +136,38 @@ class VideoExporter:
             raise
 
     def _capture_animation_frames(self) -> list:
-        """Захват кадров анимации"""
-        frames = []
-        fps = self.video_config['fps']
-        duration = self.video_config['duration_seconds']
+        """Захват кадров анимации с точной синхронизацией видео."""
+        fps = self.video_config.get('fps', 30)
+        duration = self.video_config.get('duration_seconds', 59)
         num_frames = int(duration * fps)
+        logger.info(f"Захватываем {num_frames} кадров за {duration} секунд с FPS {fps} с синхронизацией видео.")
 
+        # Ставим видео на паузу и готовимся к ручному управлению
+        self.driver.execute_script("document.getElementById('newsCardVideo').pause();")
+
+        frames = []
         for i in range(num_frames):
+            # Вычисляем точное время для текущего кадра
+            current_time = i / fps
+            
+            # Устанавливаем время и ждем, пока видео отреагирует
+            # Этот скрипт устанавливает время и возвращает true, когда видео готово
+            self.driver.execute_script(
+                f"""const video = document.getElementById('newsCardVideo');
+                video.currentTime = {current_time};
+                """
+            )
+            # Небольшая пауза, чтобы дать браузеру время отрисовать кадр после перемотки
+            time.sleep(1 / (fps * 2)) # Пауза меньше длительности кадра
+
+            # Делаем скриншот
             screenshot = self.driver.get_screenshot_as_png()
             image = Image.open(io.BytesIO(screenshot))
             if image.size != (self.video_config['width'], self.video_config['height']):
                 image = image.resize((self.video_config['width'], self.video_config['height']))
             frames.append(np.array(image))
-            time.sleep(1/fps)
-        
-        logger.info(f"Захвачено {len(frames)} кадров анимации")
+
+        logger.info(f"Захвачено {len(frames)} кадров с точной видеосинхронизацией.")
         return frames
 
     def _create_video_from_frames(self, frames: list, output_path: str) -> str:
@@ -227,7 +244,7 @@ class VideoExporter:
             return None
 
     def _create_news_short_html(self, video_package: Dict) -> Optional[str]:
-        """Creates the HTML file for the news short from the video package."""
+        """Creates the HTML file for the news short, pre-processing video with ffmpeg if needed."""
         try:
             sandbox_enabled = self.video_config.get('sandbox_mode', {}).get('enabled', False)
             template_name = 'news_short_template_sandbox.html' if sandbox_enabled else 'news_short_template.html'
@@ -237,12 +254,51 @@ class VideoExporter:
             with open(template_path, 'r', encoding='utf-8') as f:
                 template_content = f.read()
             
-            # Extract data from the video_package
             content = video_package.get('video_content', {})
             source_info = video_package.get('source_info', {})
             media = video_package.get('media', {})
 
-            # Determine source name and logo/avatar
+            # --- CORRECTED: FFMPEG LOCAL VIDEO PROCESSING ---
+            source_local_video_path = media.get('local_video_path')
+            video_offset = media.get('video_offset')
+
+            if source_local_video_path and video_offset is not None and Path(source_local_video_path).exists():
+                logger.info(f"Trimming local video {source_local_video_path} with offset {video_offset}s.")
+                try:
+                    temp_dir = Path(self.paths_config.get('temp_dir', 'temp'))
+                    temp_dir.mkdir(exist_ok=True)
+                    trimmed_video_filename = f"trimmed_{Path(source_local_video_path).stem}_{int(time.time())}.mp4"
+                    trimmed_video_path = temp_dir / trimmed_video_filename
+                    
+                    ffmpeg_path = 'ffmpeg' # Assuming ffmpeg is in PATH or venv
+
+                    command = [
+                        ffmpeg_path,
+                        '-ss', str(video_offset),
+                        '-i', str(source_local_video_path),
+                        '-t', '59',
+                        '-c', 'copy',
+                        '-y',
+                        str(trimmed_video_path)
+                    ]
+                    
+                    logger.info(f"Executing ffmpeg command: {' '.join(command)}")
+                    result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+                    logger.info("ffmpeg stdout: " + result.stdout)
+                    logger.warning("ffmpeg stderr: " + result.stderr)
+
+                    logger.info(f"Video successfully trimmed to {trimmed_video_path}")
+                    # Update the media dictionary to use the new local, trimmed video
+                    media['local_video_path'] = str(trimmed_video_path)
+
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    logger.error(f"Failed to trim video with ffmpeg: {e}")
+                    if isinstance(e, subprocess.CalledProcessError):
+                        logger.error(f"FFMPEG Error Output: {e.stderr}")
+                    # If trimming fails, try to use the original video anyway
+                    media['local_video_path'] = source_local_video_path
+            # --- END OF CORRECTED LOGIC ---
+
             display_source_name = source_info.get('username', source_info.get('name', 'News'))
             if '@' not in display_source_name and source_info.get('username'):
                 display_source_name = f"@{source_info['username']}"
@@ -250,16 +306,44 @@ class VideoExporter:
             twitter_avatar_path = source_info.get('avatar_path', '') if 'twitter' in source_info.get('name', '').lower() else ''
             source_logo_path = source_info.get('avatar_path', '') if not twitter_avatar_path else ''
 
-            # Преобразуем пути в относительные для HTML
             def to_relative_path(path):
                 if not path:
                     return ''
-                # Заменяем обратные слеши на прямые и добавляем ../
+                
+                if os.path.isabs(path) and ':' in path:
+                    try:
+                        temp_dir = Path("temp")
+                        temp_dir.mkdir(exist_ok=True)
+                        
+                        import shutil
+                        filename = Path(path).name
+                        local_path = temp_dir / filename
+                        shutil.copy2(path, local_path)
+                        
+                        logger.info(f"Copied temporary file: {path} -> {local_path}")
+                        return f"../{local_path.as_posix()}"
+                    except Exception as e:
+                        logger.error(f"Error copying file {path}: {e}")
+                        return ''
+                
                 return '../' + path.replace('\\', '/')
             
+            news_image_path = ''
+            news_video_path = ''
+            
+            if media.get('has_video') and media.get('local_video_path'):
+                news_video_path = to_relative_path(media.get('local_video_path'))
+                news_image_path = ''
+            elif media.get('has_images') and media.get('local_image_path'):
+                news_image_path = to_relative_path(media.get('local_image_path'))
+                news_video_path = ''
+            else:
+                news_image_path = to_relative_path(media.get('local_image_path', media.get('image_path', '../resources/default_backgrounds/news_default.jpg')))
+                news_video_path = to_relative_path(media.get('local_video_path', media.get('video_path', '')))
+            
             replacements = {
-                '{{NEWS_IMAGE}}': to_relative_path(media.get('local_image_path', media.get('image_path', '../resources/default_backgrounds/news_default.jpg'))),
-                '{{NEWS_VIDEO}}': to_relative_path(media.get('local_video_path', media.get('video_path', ''))),
+                '{{NEWS_IMAGE}}': news_image_path,
+                '{{NEWS_VIDEO}}': news_video_path,
                 '{{SOURCE_LOGO}}': to_relative_path(source_logo_path),
                 '{{TWITTER_AVATAR}}': to_relative_path(twitter_avatar_path),
                 '{{SOURCE_NAME}}': display_source_name,
@@ -269,7 +353,6 @@ class VideoExporter:
                 '{{BACKGROUND_MUSIC}}': self._get_background_music()
             }
             
-            # Отладка
             logger.info(f"🔍 DEBUG Template replacements:")
             logger.info(f"  NEWS_IMAGE: {replacements['{{NEWS_IMAGE}}']}")
             logger.info(f"  NEWS_VIDEO: {replacements['{{NEWS_VIDEO}}']}")
@@ -443,11 +526,19 @@ class VideoExporter:
                 
             audio_extensions = ['.mp3', '.wav', '.ogg', '.m4a']
             
+            # Собираем все аудиофайлы
+            music_files = []
             for file in os.listdir(music_dir):
                 if any(file.lower().endswith(ext) for ext in audio_extensions):
-                    music_path = os.path.join(music_dir, file)
-                    logger.info(f"Найдена фоновая музыка: {file}")
-                    return f"../{music_path}"
+                    music_files.append(file)
+            
+            if music_files:
+                # Выбираем случайный файл
+                import random
+                selected_file = random.choice(music_files)
+                music_path = os.path.join(music_dir, selected_file)
+                logger.info(f"Найдена фоновая музыка: {selected_file}")
+                return f"../{music_path}"
                     
             logger.info("Фоновая музыка не найдена в папке resources/music")
             return ""
@@ -511,35 +602,39 @@ class VideoExporter:
                 logger.warning(f"⚠️ Файл музыки не найден: '{actual_music_path}', видео будет без звука.")
         
     def create_short_from_html(self, news_data: Dict) -> Optional[str]:
-        """Создает видео-шорт из HTML-шаблона"""
+        """Создает видео-шорт из HTML-шаблона, полагаясь на пред-обработанное видео."""
         try:
             temp_html_path = self._create_news_short_html(news_data)
+            if not temp_html_path:
+                logger.error("Не удалось создать временный HTML-файл.")
+                return None
+
             self.driver.get(f"file:///{os.path.abspath(temp_html_path)}")
             
-            # Ждем инициализации GSAP и медиа
-            time.sleep(2)
+            # Даем странице время на полную загрузку всех ресурсов (шрифты, изображения)
+            time.sleep(3) 
 
             frames = []
-            duration_seconds = self.video_config.get('duration_seconds', 5)
+            duration_seconds = self.video_config.get('duration_seconds', 59)
             fps = self.video_config.get('fps', 30)
-            num_frames = duration_seconds * fps
+            num_frames = int(duration_seconds * fps)
+            
+            logger.info(f"Захватываем {num_frames} кадров за {duration_seconds} секунд с FPS {fps}")
 
             for i in range(num_frames):
                 screenshot = self.driver.get_screenshot_as_png()
                 img = Image.open(io.BytesIO(screenshot))
                 frames.append(np.array(img))
-                time.sleep(1 / fps)
-            
-            logger.info(f"Захвачено {len(frames)} кадров анимации")
+                
+                # Задержка между кадрами не нужна, т.к. анимации теперь внутри видео
+
+            logger.info(f"Захвачено {len(frames)} кадров.")
             
             output_filename = f"short_{news_data.get('id', 'temp')}_{int(time.time())}.mp4"
-            output_path = os.path.join(self.paths_config.get('output_dir', 'outputs'), output_filename)
+            output_path = os.path.join(self.paths_config.get('outputs_dir', 'outputs'), output_filename)
 
-            # Получаем музыку для передачи в экспортер
             music_path = self._get_background_music()
 
-            # Используем MoviePy если доступен
-            logger.info("Используем MoviePy для создания видео (логика не реализована).")
             self._export_frames_to_video_fallback(frames, output_path, fps, music_path)
 
             os.remove(temp_html_path)
@@ -547,7 +642,7 @@ class VideoExporter:
             return output_path
 
         except Exception as e:
-            logger.error(f"Ошибка при создании видео из HTML: {e}")
+            logger.error(f"Ошибка при создании видео из HTML: {e}", exc_info=True)
             return None
 
 

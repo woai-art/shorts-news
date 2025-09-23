@@ -27,7 +27,7 @@ video_package:
         - **EXCEPTION**: If the source text has NO title (e.g., it's a tweet), use the "youtube_title" you generate for this field.
     - "summary":
         - A neutral, factual summary of the key information.
-        - OPTIMAL LENGTH: 400-600 characters.
+        - OPTIMAL LENGTH: 200-300 characters.
         - MUST be complete sentences. Do not truncate.
 
     RULES FOR "seo_package": (This is for YouTube's backend)

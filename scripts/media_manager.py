@@ -27,6 +27,13 @@ class MediaManager:
         self.media_dir.mkdir(parents=True, exist_ok=True)
         self.selenium_driver = None  # Для передачи WebDriver из движков
         
+        # Инициализируем препроцессор видео
+        try:
+            from scripts.video_preprocessor import VideoPreprocessor
+            self.video_preprocessor = VideoPreprocessor(config)
+        except ImportError:
+            self.video_preprocessor = None
+        
         # Список User-Agent для ротации (как в WebParser)
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -871,10 +878,10 @@ class MediaManager:
             logger.warning("🎵 Фоновая музыка не найдена")
             return None
         
-        # Возвращаем первый найденный файл (можно сделать случайный выбор)
-        selected_music = music_files[0]
+        # Возвращаем случайный файл
+        import random
+        selected_music = random.choice(music_files)
         logger.info(f"🎵 Выбрана фоновая музыка: {selected_music.name}")
-        
         return str(selected_music)
     
     def cleanup_old_media(self, days_old: int = 7):

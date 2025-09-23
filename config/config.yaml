@@ -40,8 +40,19 @@ llm:
 video:
   width: 1080
   height: 1920  # 9:16 aspect ratio for shorts
-  duration_seconds: 6
-  fps: 30
+  duration_seconds: 6  # Длительность шортса 6 секунд
+  fps: 24  # Увеличиваем FPS для более плавного воспроизведения
+  
+  # Настройки скорости воспроизведения (для будущих Telegram команд)
+  playback_rate: 1.0  # Нормальная скорость (1.0), можно задавать 0.5, 1.5, 2.0 и т.д.
+  
+  # Настройки предварительной обработки видео
+  preprocessing:
+    enabled: false  # Отключаем предобработку - используем оригинальное видео
+    offset_seconds: 3  # Смещение начала (для будущих Telegram команд)
+    target_duration: 6  # Целевая длительность
+    output_fps: 24  # FPS для выходного видео
+    convert_to_gif: false  # Используем видео, а не GIF
 
   sandbox_mode:
     enabled: true
@@ -129,7 +140,7 @@ youtube:
   privacy_status: "private"  # private, public, unlisted
   category_id: "25"  # News & Politics
   client_secret_file: "config/client_secret.json"
-  upload_enabled: false
+  upload_enabled: true
 
 # Telegram бот настройки для мониторинга
 telegram:

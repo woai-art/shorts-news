@@ -15,6 +15,7 @@ try:
 except ImportError:
     pass
 from scripts.media_manager import MediaManager
+from scripts.video_preprocessor import VideoPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -252,14 +253,19 @@ class TwitterMediaManager(MediaManager):
                             logger.warning(f"❌ Ошибка переименования .part файла: {e}")
                 
                 if local_video_path:
+                    # Предобработка видео (обрезка и преобразование в GIF)
+                    processed_video_path = self._preprocess_video(local_video_path)
+                    
                     result.update({
                         'video_url': video_url if 'video_url' in locals() else None,
-                        'local_video_path': local_video_path,
-                        'thumbnail': local_video_path,
+                        'local_video_path': processed_video_path or local_video_path,  # Используем обработанное видео или оригинал
+                        'thumbnail': processed_video_path or local_video_path,
                         'has_media': True,
                         'has_video': True
                     })
                     logger.info(f"✅ Twitter видео скачано: {local_video_path}")
+                    if processed_video_path:
+                        logger.info(f"✅ Видео предобработано: {processed_video_path}")
                 else:
                     logger.warning("❌ Не удалось скачать Twitter видео")
             
@@ -935,3 +941,59 @@ class TwitterMediaManager(MediaManager):
         except Exception as e:
             logger.error(f"❌ Ошибка оптимизации аватара {input_path}: {e}")
             return False
+    
+    def _preprocess_video(self, video_path: str) -> str:
+        """
+        Предобработка видео: обрезка до 6 секунд и преобразование в MP4.
+        
+        Args:
+            video_path: Путь к исходному видео
+            
+        Returns:
+            Путь к обработанному MP4 или None при ошибке
+        """
+        try:
+            # Проверяем, не обработано ли уже видео
+            if '_processed_' in video_path:
+                logger.info(f"Видео уже обработано, пропускаем: {video_path}")
+                return None
+                
+            # Проверяем, включена ли предобработка
+            video_config = self.config.get('video', {})
+            preprocessing_config = video_config.get('preprocessing', {})
+            
+            if not preprocessing_config.get('enabled', False):
+                logger.info("Предобработка видео отключена в конфигурации")
+                return None
+                
+            if not self.video_preprocessor:
+                logger.warning("VideoPreprocessor не инициализирован")
+                return None
+            
+            # Получаем параметры из конфигурации
+            offset_seconds = preprocessing_config.get('offset_seconds', 0)
+            target_duration = preprocessing_config.get('target_duration', 6)
+            output_fps = preprocessing_config.get('output_fps', 12)
+            convert_to_gif = preprocessing_config.get('convert_to_gif', True)
+            
+            logger.info(f"🎬 Предобработка видео: {video_path}")
+            logger.info(f"Параметры: смещение={offset_seconds}с, длительность={target_duration}с, FPS={output_fps}")
+            
+            # Обрабатываем видео
+            processed_path = self.video_preprocessor.preprocess_video(
+                video_path,
+                offset_seconds=offset_seconds,
+                target_duration=target_duration
+                # fps берется из конфигурации автоматически
+            )
+            
+            if processed_path:
+                logger.info(f"✅ Видео успешно предобработано: {processed_path}")
+                return processed_path
+            else:
+                logger.warning("❌ Предобработка видео не удалась, используем оригинал")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка предобработки видео {video_path}: {e}")
+            return None

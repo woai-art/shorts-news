@@ -81,19 +81,28 @@
             background: rgba(0, 255, 255, 0.05);
             border: 1px solid rgba(0, 255, 255, 0.2);
             border-radius: 0;
-            padding: 80px;
+            padding: 30px;
             width: 100%;
-            height: 100%;
+            height: 100vh; /* Фиксированная высота - весь экран */
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
             -webkit-backdrop-filter: blur(5px);
             backdrop-filter: blur(5px);
             text-align: center;
             display: flex;
             flex-direction: column;
-            gap: 40px;
+            gap: 15px;
             animation: frame-pulse 5s infinite ease-in-out;
             color: #00ffff;
             box-sizing: border-box;
+        }
+
+        .news-card-text-section {
+            flex: 1; /* Верхняя половина карточки */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 20px;
+            padding: 20px 0;
         }
 
         .news-card-footer {
@@ -135,20 +144,29 @@
         .news-card-title {
             font-family: 'Oswald', sans-serif;
             font-weight: 700;
-            font-size: 72px;
-            color: #00ffff;
-            margin-bottom: 30px;
+            font-size: clamp(48px, 10vw, 120px); /* Базовый размер, будет переопределен JavaScript */
+            color: #ffffff;
             line-height: 1.2;
-            text-shadow: 0 0 15px rgba(0, 255, 255, 0.6);
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.8);
+            flex-shrink: 0;
+            text-align: center;
+            margin: 0;
         }
 
         .news-card-description {
             font-family: 'Roboto', sans-serif;
-            font-size: 36px;
+            font-size: clamp(24px, 5vw, 60px); /* Базовый размер, будет переопределен JavaScript */
             color: rgba(0, 255, 255, 0.9);
-            line-height: 1.4;
-            margin-bottom: 40px;
-            text-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+            line-height: 1.3;
+            text-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
+            flex-grow: 1; /* Заполняет оставшееся пространство */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            margin: 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .news-card-media {
@@ -164,12 +182,49 @@
             position: relative;
         }
 
+        .news-card-media {
+            flex: 1; /* Нижняя половина карточки */
+            width: 100%;
+            overflow: hidden; /* Скрываем переполнение */
+            position: relative;
+            margin-top: 15px; /* Отступ от текстовой секции */
+        }
+
         .news-card-media img,
         .news-card-media video {
             width: 100%;
-            height: 100%;
-            object-fit: cover;
-            border-radius: 15px;
+            height: 100%; /* Заполняем всю доступную высоту */
+            object-fit: cover; /* Заполняем контейнер с обрезкой */
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        /* Медиа теперь заполняет всю область контейнера */
+
+        /* Стили для видео */
+        .news-card-media video {
+            display: none; /* Скрываем видео по умолчанию */
+        }
+
+        /* Показываем видео когда оно активно */
+        .news-card-media video.active {
+            display: block !important;
+        }
+
+        /* Показываем изображение когда оно активно */
+        .news-card-media img.active {
+            display: block !important;
+        }
+
+        .news-card-media:has(video source[src]:not([src=""]):not([src*="{{NEWS_VIDEO}}"])) img {
+            display: none; /* Скрываем изображение, если есть видео */
+        }
+
+        .news-card-media:has(video source[src]:not([src=""]):not([src*="{{NEWS_VIDEO}}"])) video {
+            display: block; /* Показываем видео, если есть видео */
         }
 
         .news-card-media-placeholder {
@@ -227,25 +282,29 @@
             <div class="news-card">
                 <!-- Футер в верхней части карточки -->
                 <div class="news-card-footer">
-                    <img src="{{TWITTER_AVATAR}}" alt="Twitter Avatar" class="source-logo" id="twitterAvatar" style="display: none;">
-                    <img src="{{SOURCE_LOGO}}" alt="Source" class="source-logo" id="sourceLogo">
+                    <img src="{{TWITTER_AVATAR}}" alt="Twitter Avatar" class="source-logo" id="twitterAvatar">
                     <div class="source-text">{{SOURCE_NAME}}</div>
                     <div class="date-time">{{PUBLISH_DATE}}</div>
                 </div>
                 
-                <!-- Заголовок -->
-                <div id="newsText" class="news-card-title">{{NEWS_TITLE}}</div>
-                
-                <!-- Описание -->
-                <div id="newsBrief" class="news-card-description">{{NEWS_BRIEF}}</div>
+                <!-- Текстовая секция (верхняя половина) -->
+                <div class="news-card-text-section">
+                    <!-- Заголовок -->
+                    <div id="newsText" class="news-card-title">{{NEWS_TITLE}}</div>
+                    
+                    <!-- Описание -->
+                    <div id="newsBrief" class="news-card-description">{{NEWS_BRIEF}}</div>
+                </div>
                 
                 <!-- Медиа в нижней части карточки -->
-                <div class="news-card-media">
-                    <img id="newsCardImage" src="{{NEWS_IMAGE}}" alt="News Image" style="display: none;">
-                    <video id="newsCardVideo" style="display: none;">
+                <div class="news-card-media" id="mediaContainer">
+                    <!-- Изображение/статичная картинка -->
+                    <img id="newsCardImage" src="{{NEWS_IMAGE}}" alt="News Image">
+                    <!-- Видео -->
+                    <video id="newsCardVideo" preload="auto" muted playsinline style="display: none; object-fit: cover;">
                         <source src="{{NEWS_VIDEO}}" type="video/mp4">
+                        Ваш браузер не поддерживает видео.
                     </video>
-                    <div class="news-card-media-placeholder">No media available</div>
                 </div>
             </div>
         </div>
@@ -254,23 +313,39 @@
         function adjustFontSize() {
             const newsText = document.getElementById('newsText');
             const newsBrief = document.getElementById('newsBrief');
-            if (!newsText || !newsBrief) return;
+            const textSection = document.querySelector('.news-card-text-section');
+            if (!newsText || !newsBrief || !textSection) return;
             
-            // Адаптируем размер заголовка
+            const textSectionRect = textSection.getBoundingClientRect();
+            const availableHeight = textSectionRect.height - 60; // Отступы
+            
             const titleLength = newsText.textContent.length;
-            let titleFontSize = 48;
-            if (titleLength > 60) titleFontSize = 36;
-            else if (titleLength > 40) titleFontSize = 42;
+            const titleHeight = availableHeight * 0.3;
+            const baseTitleSize = Math.max(32, Math.min(titleHeight / 1.2, 120));
+            const lengthFactor = titleLength > 60 ? 0.85 : titleLength > 40 ? 0.92 : 1.0;
+            const titleFontSize = Math.round(baseTitleSize * lengthFactor);
             newsText.style.fontSize = titleFontSize + 'px';
             
-            // Адаптируем размер описания
             const briefLength = newsBrief.textContent.length;
-            let briefFontSize = 24;
-            if (briefLength > 300) briefFontSize = 18;
-            else if (briefLength > 200) briefFontSize = 20;
-            else if (briefLength > 150) briefFontSize = 22;
+            const briefHeight = availableHeight * 0.7;
+            const estimatedLines = Math.ceil(briefLength / 60);
+            const lineHeight = 1.3;
+            const baseBriefSize = Math.max(16, Math.min(briefHeight / (estimatedLines * lineHeight), 60));
+            const briefLengthFactor = briefLength > 300 ? 0.85 : briefLength > 200 ? 0.92 : 1.0;
+            const briefFontSize = Math.round(baseBriefSize * briefLengthFactor);
             newsBrief.style.fontSize = briefFontSize + 'px';
+
+            setTimeout(() => {
+                const briefRect = newsBrief.getBoundingClientRect();
+                const textSectionRect2 = textSection.getBoundingClientRect();
+                const overflow = briefRect.bottom - (textSectionRect2.bottom - 20);
+                if (overflow > 0) {
+                    const newBriefSize = Math.max(14, briefFontSize * 0.9);
+                    newsBrief.style.fontSize = newBriefSize + 'px';
+                }
+            }, 100);
         }
+
         function adjustMediaTitleSize() {
             const mediaTitle = document.getElementById('mediaTitle');
             if (!mediaTitle) return;
@@ -280,85 +355,30 @@
             else if (titleLength > 50) fontSize = 42;
             mediaTitle.style.fontSize = fontSize + 'px';
         }
+
         function initializeMedia() {
-            const newsImage = document.getElementById('newsMedia'), newsVideo = document.getElementById('newsVideo'), videoSource = newsVideo.querySelector('source');
-            console.log('Video source src:', videoSource ? videoSource.src : 'not found');
-            const hasVideo = videoSource && videoSource.src && videoSource.src !== '' && !videoSource.src.includes('{{NEWS_VIDEO}}');
-            console.log('Has video:', hasVideo);
+            const newsCardVideo = document.getElementById('newsCardVideo');
+            const videoSource = newsCardVideo ? newsCardVideo.querySelector('source') : null;
+
+            const hasVideo = videoSource && videoSource.src && !videoSource.src.includes('{{NEWS_VIDEO}}');
+
             if (hasVideo) {
-                newsVideo.style.display = 'block'; newsImage.style.display = 'none'; startZoomAnimation(newsVideo); newsVideo.play().catch(e => {});
+                newsCardVideo.style.display = 'block';
+                const playPromise = newsCardVideo.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.error("Video autoplay failed:", error);
+                    });
+                }
             } else {
-                startZoomAnimation(newsImage);
-            }
-        }
-        function initializeTwitterAvatar() {
-            // Инициализируем аватар в карточке
-            const cardTwitterAvatar = document.querySelector('.news-card-footer #twitterAvatar');
-            const cardSourceLogo = document.querySelector('.news-card-footer #sourceLogo');
-            
-            console.log('Card Twitter Avatar src:', cardTwitterAvatar ? cardTwitterAvatar.src : 'not found');
-            console.log('Card Source Logo src:', cardSourceLogo ? cardSourceLogo.src : 'not found');
-            
-            // Проверяем, есть ли реальный путь к аватарке (не плейсхолдер)
-            if (cardTwitterAvatar && cardTwitterAvatar.src && 
-                !cardTwitterAvatar.src.includes('{{TWITTER_AVATAR}}') && 
-                cardTwitterAvatar.src.includes('avatar_')) {
-                cardTwitterAvatar.style.display = 'block';
-                cardSourceLogo.style.display = 'none';
-                console.log('Twitter avatar displayed in card');
-            } else {
-                cardTwitterAvatar.style.display = 'none';
-                cardSourceLogo.style.display = 'block';
-                console.log('Using source logo instead of Twitter avatar');
+                 newsCardVideo.style.display = 'none';
             }
         }
 
-        function initializeCardMedia() {
-            const cardImage = document.getElementById('newsCardImage');
-            const cardVideo = document.getElementById('newsCardVideo');
-            const placeholder = document.querySelector('.news-card-media-placeholder');
-            const videoSource = cardVideo.querySelector('source');
-            
-            console.log('Card Image src:', cardImage ? cardImage.src : 'not found');
-            console.log('Card video source src:', videoSource ? videoSource.src : 'not found');
-            
-            // Проверяем наличие реальных файлов (не плейсхолдеров)
-            const hasVideo = videoSource && videoSource.src && videoSource.src !== '' && 
-                           !videoSource.src.includes('{{NEWS_VIDEO}}') && 
-                           videoSource.src.includes('resources/');
-            
-            const hasImage = cardImage && cardImage.src && cardImage.src !== '' && 
-                           !cardImage.src.includes('{{NEWS_IMAGE}}') && 
-                           cardImage.src.includes('resources/');
-            
-            console.log('Card has video:', hasVideo);
-            console.log('Card has image:', hasImage);
-            
-            if (hasVideo) {
-                cardVideo.style.display = 'block';
-                cardImage.style.display = 'none';
-                placeholder.style.display = 'none';
-                cardVideo.play().catch(e => {});
-                console.log('Video displayed in card');
-            } else if (hasImage) {
-                cardImage.style.display = 'block';
-                cardVideo.style.display = 'none';
-                placeholder.style.display = 'none';
-                console.log('Image displayed in card');
-            } else {
-                placeholder.style.display = 'block';
-                cardImage.style.display = 'none';
-                cardVideo.style.display = 'none';
-                console.log('No media available, showing placeholder');
-            }
-        }
-        function startZoomAnimation(el) { if (el) gsap.to(el, { scale: 1.15, duration: 5, ease: "power1.inOut" }); }
         document.addEventListener('DOMContentLoaded', () => {
             adjustFontSize();
             adjustMediaTitleSize();
             initializeMedia();
-            initializeTwitterAvatar();
-            initializeCardMedia();
         });
     </script>
 </body>
