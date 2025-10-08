@@ -25,7 +25,8 @@ from telegram_publisher import TelegramPublisher
 from analytics import NewsAnalytics
 
 # Импортируем новую архитектуру движков
-from engines import registry, PoliticoEngine, WashingtonPostEngine, TwitterEngine, NBCNewsEngine
+from engines import registry, PoliticoEngine, WashingtonPostEngine, TwitterEngine, NBCNewsEngine, ABCNewsEngine, TelegramPostEngine, FinancialTimesEngine
+# from engines import WSJEngine  # Отключен: требует подписку + Cloudflare
 
 # Настройка логирования
 logging.basicConfig(
@@ -87,6 +88,10 @@ class ShortsNewsOrchestrator:
             registry.register_engine('washingtonpost', WashingtonPostEngine)
             registry.register_engine('twitter', TwitterEngine)
             registry.register_engine('nbcnews', NBCNewsEngine)
+            registry.register_engine('abcnews', ABCNewsEngine)
+            registry.register_engine('telegrampost', TelegramPostEngine)
+            registry.register_engine('financialtimes', FinancialTimesEngine)
+            # registry.register_engine('wsj', WSJEngine)  # Отключен: требует подписку + Cloudflare
             
             # TODO: Добавить остальные движки
             # registry.register_engine('apnews', APNewsEngine)
@@ -346,6 +351,15 @@ class ShortsNewsOrchestrator:
         elif 'nbc' in source:
             from engines.nbcnews.nbcnews_media_manager import NBCNewsMediaManager
             media_manager = NBCNewsMediaManager(self.config)
+        elif 'telegram' in source:
+            from engines.telegrampost.telegrampost_media_manager import TelegramPostMediaManager
+            media_manager = TelegramPostMediaManager(self.config)
+        elif 'financial' in source or 'ft' in source:
+            from engines.financialtimes.financialtimes_media_manager import FinancialTimesMediaManager
+            media_manager = FinancialTimesMediaManager(self.config)
+        # elif 'wsj' in source or 'wall street' in source:
+        #     from engines.wsj.wsj_media_manager import WSJMediaManager
+        #     media_manager = WSJMediaManager(self.config)
         else:
             from scripts.media_manager import MediaManager
             media_manager = MediaManager(self.config)
@@ -577,8 +591,9 @@ class ShortsNewsOrchestrator:
             issues.append("Текст содержит слишком мало уникальных символов")
         
         # 5. Проверка на пустые или служебные данные
+        # Снижено с 100 до 70 для коротких статей (напр. FT с paywall)
         if not description or description in ['...', '']:
-            if len(summary) < 100:  # Если нет описания, текст должен быть длиннее
+            if len(summary) < 70:  # Если нет описания, текст должен быть длиннее
                 issues.append("Недостаточно контента для создания видео")
         
         # 6. Проверка на JSON в заголовке (ошибка LLM)

@@ -299,12 +299,33 @@ class VideoExporter:
                     media['local_video_path'] = source_local_video_path
             # --- END OF CORRECTED LOGIC ---
 
-            display_source_name = source_info.get('username', source_info.get('name', 'News'))
-            if '@' not in display_source_name and source_info.get('username'):
-                display_source_name = f"@{source_info['username']}"
-
-            twitter_avatar_path = source_info.get('avatar_path', '') if 'twitter' in source_info.get('name', '').lower() else ''
-            source_logo_path = source_info.get('avatar_path', '') if not twitter_avatar_path else ''
+            # Определяем тип источника
+            source_name_lower = source_info.get('name', '').lower()
+            avatar_path = source_info.get('avatar_path', '')
+            
+            # Определяем, какой тип отображения использовать
+            is_twitter = 'twitter' in source_name_lower or 'x.com' in source_name_lower
+            is_telegram = 'telegram' in source_name_lower
+            
+            # Для Twitter и Telegram - используем аватар пользователя/иконку
+            if is_twitter or is_telegram:
+                twitter_avatar_path = avatar_path if avatar_path else self._get_default_logo(source_info.get('name', 'News'))
+                # Для Twitter показываем username, для Telegram - "Telegram Post"
+                if is_twitter:
+                    display_source_name = source_info.get('username', source_info.get('name', 'News'))
+                    if '@' not in display_source_name and source_info.get('username'):
+                        display_source_name = f"@{display_source_name}"
+                else:
+                    display_source_name = source_info.get('name', 'Telegram Post')
+            else:
+                # Для остальных источников - логотип источника
+                # Используем TWITTER_AVATAR для совместимости с шаблоном
+                # Если есть avatar_path, используем его, иначе ищем по имени источника
+                if avatar_path:
+                    twitter_avatar_path = avatar_path
+                else:
+                    twitter_avatar_path = self._get_source_logo_path(source_info.get('name', 'News'))
+                display_source_name = source_info.get('name', 'News')
 
             def to_relative_path(path):
                 if not path:
@@ -344,7 +365,7 @@ class VideoExporter:
             replacements = {
                 '{{NEWS_IMAGE}}': news_image_path,
                 '{{NEWS_VIDEO}}': news_video_path,
-                '{{SOURCE_LOGO}}': to_relative_path(source_logo_path),
+                '{{SOURCE_LOGO}}': '',  # Не используется, оставлено для совместимости
                 '{{TWITTER_AVATAR}}': to_relative_path(twitter_avatar_path),
                 '{{SOURCE_NAME}}': display_source_name,
                 '{{NEWS_TITLE}}': content.get('title', 'News Title'),
@@ -400,6 +421,81 @@ class VideoExporter:
         else:
             return 'News'
 
+    def _get_source_logo_path(self, source_name: str) -> str:
+        """
+        Получает путь к логотипу источника по имени
+        """
+        if not source_name:
+            return ''
+        
+        # Маппинг известных источников на их логотипы (только существующие файлы)
+        logo_mapping = {
+            'nbc news': 'resources/logos/NBCNews.png',
+            'nbcnews': 'resources/logos/NBCNews.png',
+            'abc news': 'resources/logos/abc.png',
+            'abcnews': 'resources/logos/abc.png',
+            'reuters': 'resources/logos/Reuters.png',
+            'cnn': 'resources/logos/cnn.png',
+            'fox news': 'resources/logos/FoxNews.png',
+            'foxnews': 'resources/logos/FoxNews.png',
+            'washington post': 'resources/logos/WashingtonPost.png',
+            'washingtonpost': 'resources/logos/WashingtonPost.png',
+            'wall street journal': 'resources/logos/WSJ.png',
+            'wsj': 'resources/logos/WSJ.png',
+            'cnbc': 'resources/logos/CNBC.png',
+            'al jazeera': 'resources/logos/ALJAZEERA.png',
+            'aljazeera': 'resources/logos/ALJAZEERA.png',
+            'associated press': 'resources/logos/AssociatedPress.png',
+            'ap': 'resources/logos/AssociatedPress.png',
+            'financial times': 'resources/logos/Financial_Times_corporate_logo_(no_background).svg',
+            'ft': 'resources/logos/Financial_Times_corporate_logo_(no_background).svg',
+            'wall street journal': 'resources/logos/WSJ.png',
+            'wsj': 'resources/logos/WSJ.png',
+        }
+        
+        source_lower = source_name.lower().strip()
+        
+        # Проверяем точное совпадение
+        if source_lower in logo_mapping:
+            logo_path = logo_mapping[source_lower]
+            if Path(logo_path).exists():
+                logger.info(f"✅ Найден логотип для {source_name}: {logo_path}")
+                return logo_path
+        
+        # Проверяем частичное совпадение
+        for key, logo_path in logo_mapping.items():
+            if key in source_lower or source_lower in key:
+                if Path(logo_path).exists():
+                    logger.info(f"✅ Найден логотип для {source_name} (частичное совпадение): {logo_path}")
+                    return logo_path
+        
+        # Пробуем найти файл по шаблону
+        potential_paths = [
+            f"resources/logos/{source_name}.png",
+            f"resources/logos/{source_name.replace(' ', '')}.png",
+            f"resources/logos/{source_name.upper()}.png",
+            f"resources/logos/{source_name.lower().replace(' ', '')}.png",
+        ]
+        
+        for path in potential_paths:
+            if Path(path).exists():
+                logger.info(f"✅ Найден логотип для {source_name}: {path}")
+                return path
+        
+        logger.warning(f"⚠️ Логотип для источника '{source_name}' не найден, используем дефолтный")
+        return ''
+    
+    def _get_default_logo(self, source_name: str) -> str:
+        """
+        Возвращает дефолтный логотип для источника
+        """
+        # Для Twitter/X
+        if 'twitter' in source_name.lower() or 'x.com' in source_name.lower():
+            return 'resources/logos/X.png'
+        
+        # Дефолтный логотип
+        return ''
+    
     def _get_twitter_avatar_path(self, news_data: Dict[str, Any]) -> str:
         """
         Получает путь к аватару Twitter. Предполагается, что аватар уже скачан
@@ -428,33 +524,6 @@ class VideoExporter:
             logger.error(f"❌ Ошибка получения пути к аватару Twitter: {e}")
             return ''
     
-    def _get_source_logo_path(self, source_name: str) -> str:
-        """Получает путь к логотипу источника"""
-        logo_files = {
-            'CNN': 'media/CNN.jpg',
-            'FoxNews': 'media/FoxNews.png',
-            'NYTimes': 'media/NYTimes.png',
-            'WashingtonPost': 'media/WashingtonPost.jpg',
-            'Reuters': 'media/Reuters.jpg',
-            'AssociatedPress': 'media/AssociatedPress.jpg',
-            'WSJ': 'media/WSJ.jpg',
-            'CNBC': 'media/CNBC.png',
-            'ALJAZEERA': 'media/ALJAZEERA.jpg',
-            'ABC': 'media/ABC.jpg',
-            'NBC': 'media/NBCNews.png',
-            'NBCNEWS': 'media/NBCNews.png'
-        }
-        
-        logo_path = logo_files.get(source_name, 'media/CNN.jpg')  # CNN как дефолт
-        logger.info(f"🔍 DEBUG: Источник: '{source_name}', логотип: '{logo_path}'")
-        
-        # Проверяем, существует ли файл
-        if os.path.exists(logo_path):
-            return f"../{logo_path}"
-        else:
-            logger.warning(f"Логотип не найден: {logo_path}")
-            return "../media/CNN.jpg"  # Фоллбэк
-
     def _get_news_image(self, news_data: Dict) -> str:
         """Получает изображение новости"""
         # Проверяем, есть ли локальный путь к изображению

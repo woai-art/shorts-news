@@ -56,6 +56,11 @@ class PoliticoMediaManager(MediaManager):
             news_data = {**news_data, 'images': []}
 
         # Дальше используем базовую загрузку/обработку
-        return super().process_news_media(news_data)
+        result = super().process_news_media(news_data)
+        
+        # Устанавливаем путь к логотипу POLITICO
+        result['avatar_path'] = 'resources/logos/politico.png'
+        
+        return result
 
 

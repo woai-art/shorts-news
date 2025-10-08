@@ -100,21 +100,22 @@
             flex: 1; /* Верхняя половина карточки */
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
-            gap: 20px;
-            padding: 20px 0;
+            justify-content: flex-start;
+            gap: 15px;
+            padding: 15px 40px; /* Уменьшили отступы */
         }
 
         .news-card-footer {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 20px;
-            padding: 20px;
+            gap: 15px;
+            padding: 10px 20px; /* Уменьшили размеры футера */
             background: rgba(0, 255, 255, 0.1);
             border: 1px solid rgba(0, 255, 255, 0.3);
-            border-radius: 15px;
-            margin-bottom: 20px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            flex-shrink: 0; /* Футер не сжимается */
         }
 
         .news-card-footer .source-logo {
@@ -144,29 +145,34 @@
         .news-card-title {
             font-family: 'Oswald', sans-serif;
             font-weight: 700;
-            font-size: clamp(48px, 10vw, 120px); /* Базовый размер, будет переопределен JavaScript */
+            font-size: clamp(24px, 4vw, 60px); /* Уменьшили размер заголовка */
             color: #ffffff;
-            line-height: 1.2;
+            line-height: 1.1; /* Более плотная высота строки */
             text-shadow: 0 0 20px rgba(255, 255, 255, 0.8);
-            flex-shrink: 0;
-            text-align: center;
-            margin: 0;
-        }
-
-        .news-card-description {
-            font-family: 'Roboto', sans-serif;
-            font-size: clamp(24px, 5vw, 60px); /* Базовый размер, будет переопределен JavaScript */
-            color: rgba(0, 255, 255, 0.9);
-            line-height: 1.3;
-            text-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
-            flex-grow: 1; /* Заполняет оставшееся пространство */
+            flex: 0 0 20%; /* Заголовок занимает 20% от текстовой секции */
             display: flex;
             align-items: center;
             justify-content: center;
             text-align: center;
             margin: 0;
+            overflow: hidden; /* Обрезаем текст, если не помещается */
+        }
+
+        .news-card-description {
+            font-family: 'Roboto', sans-serif;
+            font-size: clamp(18px, 3.5vw, 45px); /* Уменьшили размер описания */
+            color: rgba(0, 255, 255, 0.9);
+            line-height: 1.3;
+            text-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
+            flex: 1; /* Заполняет оставшееся пространство (80%) */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center; /* Выравнивание по центру */
+            margin: 0;
             word-wrap: break-word;
             overflow-wrap: break-word;
+            overflow: hidden; /* Обрезаем текст, если не помещается */
         }
 
         .news-card-media {
@@ -194,7 +200,7 @@
         .news-card-media video {
             width: 100%;
             height: 100%; /* Заполняем всю доступную высоту */
-            object-fit: cover; /* Заполняем контейнер с обрезкой */
+            object-fit: contain; /* Изменено с cover на contain */
             position: absolute;
             top: 0;
             left: 0;
@@ -301,7 +307,7 @@
                     <!-- Изображение/статичная картинка -->
                     <img id="newsCardImage" src="{{NEWS_IMAGE}}" alt="News Image">
                     <!-- Видео -->
-                    <video id="newsCardVideo" preload="auto" muted playsinline style="display: none; object-fit: cover;">
+                    <video id="newsCardVideo" preload="auto" muted playsinline style="display: none; object-fit: contain;">
                         <source src="{{NEWS_VIDEO}}" type="video/mp4">
                         Ваш браузер не поддерживает видео.
                     </video>
@@ -317,31 +323,51 @@
             if (!newsText || !newsBrief || !textSection) return;
             
             const textSectionRect = textSection.getBoundingClientRect();
-            const availableHeight = textSectionRect.height - 60; // Отступы
+            const availableHeight = textSectionRect.height - 40; // Уменьшили отступы
             
+            // Заголовок: 20% от доступной высоты
             const titleLength = newsText.textContent.length;
-            const titleHeight = availableHeight * 0.3;
-            const baseTitleSize = Math.max(32, Math.min(titleHeight / 1.2, 120));
-            const lengthFactor = titleLength > 60 ? 0.85 : titleLength > 40 ? 0.92 : 1.0;
+            const titleHeight = availableHeight * 0.2; // Изменили с 0.3 на 0.2 (20%)
+            const baseTitleSize = Math.max(24, Math.min(titleHeight / 1.1, 60)); // Уменьшили максимальный размер
+            const lengthFactor = titleLength > 80 ? 0.75 : titleLength > 60 ? 0.85 : titleLength > 40 ? 0.95 : 1.0;
             const titleFontSize = Math.round(baseTitleSize * lengthFactor);
             newsText.style.fontSize = titleFontSize + 'px';
             
+            // Описание: 80% от доступной высоты - агрессивная адаптация для полного заполнения
             const briefLength = newsBrief.textContent.length;
-            const briefHeight = availableHeight * 0.7;
-            const estimatedLines = Math.ceil(briefLength / 60);
-            const lineHeight = 1.3;
-            const baseBriefSize = Math.max(16, Math.min(briefHeight / (estimatedLines * lineHeight), 60));
-            const briefLengthFactor = briefLength > 300 ? 0.85 : briefLength > 200 ? 0.92 : 1.0;
-            const briefFontSize = Math.round(baseBriefSize * briefLengthFactor);
+            const briefHeight = availableHeight * 0.8; // 80% от доступной высоты
+            
+            // Более агрессивный расчет - начинаем с большего размера
+            const containerWidth = textSectionRect.width - 80; // Учитываем отступы
+            const estimatedCharsPerLine = Math.floor(containerWidth / 12); // Уменьшили ширину символа для большего количества строк
+            const estimatedLines = Math.ceil(briefLength / estimatedCharsPerLine);
+            
+            // Агрессивно рассчитываем размер шрифта для заполнения всей области
+            const lineHeight = 1.25; // Уменьшили межстрочный интервал
+            let maxFontSize = Math.max(25, Math.min(briefHeight / (estimatedLines * lineHeight), 60)); // Увеличили минимальный размер
+            
+            // Убираем фактор длины - делаем максимальный размер для заполнения
+            const briefFontSize = Math.round(maxFontSize);
             newsBrief.style.fontSize = briefFontSize + 'px';
+            
+            console.log(`Brief: ${briefLength} chars, ${estimatedLines} lines, ${briefFontSize}px font (aggressive)`);
 
+            // Проверяем переполнение и корректируем размер более мягко
             setTimeout(() => {
                 const briefRect = newsBrief.getBoundingClientRect();
                 const textSectionRect2 = textSection.getBoundingClientRect();
-                const overflow = briefRect.bottom - (textSectionRect2.bottom - 20);
-                if (overflow > 0) {
-                    const newBriefSize = Math.max(14, briefFontSize * 0.9);
+                const availableHeight = textSectionRect2.height - 40; // Отступы
+                const briefAreaHeight = availableHeight * 0.8; // 80% для описания
+                const overflow = briefRect.height - briefAreaHeight;
+                
+                if (overflow > 10) { // Увеличили порог переполнения
+                    const newBriefSize = Math.max(20, briefFontSize * 0.9); // Более мягкое уменьшение
                     newsBrief.style.fontSize = newBriefSize + 'px';
+                    console.log(`Overflow detected: ${overflow}px, reducing font to ${newBriefSize}px`);
+                } else if (overflow < -20) { // Если текст слишком маленький, увеличиваем
+                    const newBriefSize = Math.min(60, briefFontSize * 1.1);
+                    newsBrief.style.fontSize = newBriefSize + 'px';
+                    console.log(`Underflow detected: ${overflow}px, increasing font to ${newBriefSize}px`);
                 }
             }, 100);
         }
@@ -358,20 +384,27 @@
 
         function initializeMedia() {
             const newsCardVideo = document.getElementById('newsCardVideo');
+            const newsCardImage = document.getElementById('newsCardImage');
             const videoSource = newsCardVideo ? newsCardVideo.querySelector('source') : null;
 
             const hasVideo = videoSource && videoSource.src && !videoSource.src.includes('{{NEWS_VIDEO}}');
+            const hasImage = newsCardImage && newsCardImage.src && !newsCardImage.src.includes('{{NEWS_IMAGE}}') && !newsCardImage.src.endsWith('.html');
 
             if (hasVideo) {
                 newsCardVideo.style.display = 'block';
+                newsCardImage.style.display = 'none';
                 const playPromise = newsCardVideo.play();
                 if (playPromise !== undefined) {
                     playPromise.catch(error => {
                         console.error("Video autoplay failed:", error);
                     });
                 }
+            } else if (hasImage) {
+                newsCardImage.style.display = 'block';
+                newsCardVideo.style.display = 'none';
             } else {
                  newsCardVideo.style.display = 'none';
+                 newsCardImage.style.display = 'none';
             }
         }
 

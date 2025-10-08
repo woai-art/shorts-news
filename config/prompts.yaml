@@ -19,16 +19,25 @@ video_package:
       }}
     }}
 
-    RULES FOR "video_content": (This is what viewers will see in the video)
+    RULES FOR "video_content":
     - "title":
-        - A short, clean, engaging headline. MAX 80 characters.
-        - MUST be purely informational.
-        - **CRITICAL**: REMOVE all source names (CNN, POLITICO), generic labels (Breaking, Live Update, News), and any other non-content text.
-        - **EXCEPTION**: If the source text has NO title (e.g., it's a tweet), use the "youtube_title" you generate for this field.
+        - A short, engaging, purely informational headline. MAX 80 characters.
+        - Capture the main fact or contrast in the story.
+        - NO sources, labels, or meta text. Only the content itself.
+
     - "summary":
-        - A neutral, factual summary of the key information.
-        - OPTIMAL LENGTH: 200-300 characters.
-        - MUST be complete sentences. Do not truncate.
+        - A clear, neutral, factual summary in MAX 250 characters.
+        - Write as if narrating directly to the viewer.
+        - NEVER say "tweet," "post," "online," or "source said."
+        - If "author_type = person": Attribute directly, e.g. "Governor Gavin Newsom warned..."
+        - If "author_type = media": Present only the fact, without attribution.
+        - Do NOT use "former president" for Trump. Always "President Trump" or "Trump."
+        - Do NOT use "senator" for Rubio, Marco Rubio. Always "U.S. Secretary of State" or "Rubio."
+        - If no role is given, use only the name without inventing a title.
+        - If the content includes a direct quote in quotation marks ("..."):
+            - Reproduce the quote exactly as written, without rephrasing or summarizing.
+            - You may introduce it briefly, but never alter the words inside the quotes.
+
 
     RULES FOR "seo_package": (This is for YouTube's backend)
     - "youtube_title":

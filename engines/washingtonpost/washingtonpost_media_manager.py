@@ -38,6 +38,11 @@ class WashingtonPostMediaManager(MediaManager):
             logger.warning("WASHINGTONPOST: нет валидных изображений с домена источника — отклоняем медиа")
             news_data = {**news_data, 'images': []}
 
-        return super().process_news_media(news_data)
+        result = super().process_news_media(news_data)
+        
+        # Устанавливаем путь к логотипу Washington Post
+        result['avatar_path'] = 'resources/logos/WashingtonPost.png'
+        
+        return result
 
 

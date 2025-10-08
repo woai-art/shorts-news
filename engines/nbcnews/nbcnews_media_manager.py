@@ -84,7 +84,8 @@ class NBCNewsMediaManager:
                 'local_video_path': local_video_path,
                 'processed_images': [local_image_path] if local_image_path else [],
                 'processed_videos': [local_video_path] if local_video_path else [],
-                'has_media': has_media
+                'has_media': has_media,
+                'avatar_path': 'resources/logos/NBCNews.png'  # Логотип NBC News
             }
             
             logger.info(f"📺 NBC News медиа обработано: has_media={has_media}")
@@ -97,7 +98,8 @@ class NBCNewsMediaManager:
                 'local_video_path': None,
                 'processed_images': [],
                 'processed_videos': [],
-                'has_media': False
+                'has_media': False,
+                'avatar_path': 'resources/logos/NBCNews.png'  # Логотип NBC News даже при ошибке
             }
     
     def _filter_images(self, images: List[str]) -> List[str]:

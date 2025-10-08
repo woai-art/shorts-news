@@ -177,7 +177,7 @@ class GeminiDirectProvider(LLMProvider):
         return {
             "video_content": {
                 "title": title[:80],
-                "summary": description[:500]
+                "summary": description[:250]  # Ограничиваем до 250 символов
             },
             "seo_package": {
                 "youtube_title": title,

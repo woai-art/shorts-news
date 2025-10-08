@@ -26,7 +26,8 @@ sys.path.append(os.path.abspath('scripts'))
 try:
     from telegram_bot import NewsTelegramBot
     # Импортируем новую архитектуру движков
-    from engines import registry, PoliticoEngine, WashingtonPostEngine, TwitterEngine, NBCNewsEngine
+    from engines import registry, PoliticoEngine, WashingtonPostEngine, TwitterEngine, NBCNewsEngine, ABCNewsEngine, TelegramPostEngine, FinancialTimesEngine
+    # from engines import WSJEngine  # Отключен: требует подписку + Cloudflare
 except ImportError as e:
     print(f"Critical Error: Failed to import necessary modules. Make sure you are running this from the project root and venv is active. Details: {e}")
     sys.exit(1)
@@ -100,6 +101,10 @@ class ChannelMonitor:
             registry.register_engine('washingtonpost', WashingtonPostEngine)
             registry.register_engine('twitter', TwitterEngine)
             registry.register_engine('nbcnews', NBCNewsEngine)
+            registry.register_engine('abcnews', ABCNewsEngine)
+            registry.register_engine('telegrampost', TelegramPostEngine)
+            registry.register_engine('financialtimes', FinancialTimesEngine)
+            # registry.register_engine('wsj', WSJEngine)  # Отключен: требует подписку + Cloudflare
             
             # TODO: Добавить остальные движки
             # registry.register_engine('apnews', APNewsEngine)
@@ -350,16 +355,22 @@ class ChannelMonitor:
         if not message_id or message_id in self.processed_messages:
             return
 
-        text = message.get("text", "").strip()
-        if not text:
+        text = message.get("text", "").strip() or message.get("caption", "").strip()
+        
+        # Проверяем наличие медиа без текста
+        has_media = bool(message.get('photo') or message.get('video') or 
+                        message.get('animation') or message.get('document'))
+        
+        if not text and not has_media:
+            logger.info(f"⏭️ Пропускаем сообщение {message_id}: нет текста и медиа")
             return
 
-        logger.info(f"New message received (ID: {message_id}): {text[:100]}...")
-        self.send_status_message(f"Received: {text[:50]}...")
+        logger.info(f"New message received (ID: {message_id}): {text[:100] if text else '[media only]'}...")
+        self.send_status_message(f"Received: {text[:50] if text else '[media]'}...")
 
         try:
             url_pattern = r'https?://[^\s]+'
-            urls = re.findall(url_pattern, text)
+            urls = re.findall(url_pattern, text) if text else []
             
             if urls:
                 url = urls[0]
@@ -445,13 +456,66 @@ class ChannelMonitor:
                         'parsing_failed': True
                     }
             else:
-                news_data = {
-                    'url': f'telegram_message_{message_id}',
-                    'title': text[:120],
-                    'description': text,
-                    'content': text,
-                    'source': 'Telegram Message'
-                }
+                # Нет URL - обрабатываем как прямой Telegram пост
+                logger.info("📝 Нет URL в сообщении - обрабатываем как Telegram пост")
+                
+                # Проверяем минимальную длину текста
+                if text and len(text) >= 20:
+                    try:
+                        # Создаем специальный URL для Telegram поста
+                        telegram_url = f"telegram://post/{message_id}"
+                        
+                        # Используем TelegramPost движок
+                        engine = registry.get_engine_for_url(telegram_url, self.config)
+                        
+                        if engine:
+                            logger.info(f"✅ Выбран движок: {engine.source_name}")
+                            
+                            # Парсим пост, передавая оригинальное сообщение
+                            parsed_data = engine.parse_url(telegram_url, telegram_message=message)
+                            
+                            if parsed_data and parsed_data.get('title'):
+                                news_data = parsed_data
+                                logger.info(f"✅ Telegram пост обработан: {news_data.get('title', '')[:50]}...")
+                                
+                                # Обрабатываем медиа через TelegramPostMediaManager
+                                try:
+                                    from engines.telegrampost.telegrampost_media_manager import TelegramPostMediaManager
+                                    media_manager = TelegramPostMediaManager(self.config)
+                                    media_result = media_manager.process_news_media(news_data)
+                                    news_data.update(media_result)
+                                    logger.info(f"📸 Медиа обработано: has_media={media_result.get('has_media', False)}")
+                                except Exception as e:
+                                    logger.warning(f"⚠️ Ошибка обработки медиа Telegram поста: {e}")
+                            else:
+                                logger.warning("❌ Не удалось обработать Telegram пост")
+                                return
+                        else:
+                            logger.error("❌ Не найден движок для Telegram постов")
+                            # Fallback к старой логике
+                            news_data = {
+                                'url': f'telegram://post/{message_id}',
+                                'title': text[:120],
+                                'description': text,
+                                'content': text,
+                                'source': 'Telegram Message'
+                            }
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка обработки Telegram поста: {e}")
+                        import traceback
+                        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                        # Fallback к старой логике
+                        news_data = {
+                            'url': f'telegram://post/{message_id}',
+                            'title': text[:120],
+                            'description': text,
+                            'content': text,
+                            'source': 'Telegram Message'
+                        }
+                else:
+                    logger.info(f"⏭️ Текст слишком короткий ({len(text) if text else 0} символов), пропускаем")
+                    return
 
             # Добавляем стандартные поля, если их нет
             news_data.setdefault('source', 'Unknown')

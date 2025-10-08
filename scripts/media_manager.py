@@ -64,6 +64,67 @@ class MediaManager:
     def set_selenium_driver(self, driver):
         """Устанавливает WebDriver для использования в загрузке изображений"""
         self.selenium_driver = driver
+    
+    def _get_logo_path_for_source(self, source_name: str) -> str:
+        """
+        Получает путь к логотипу источника по имени источника
+        """
+        if not source_name:
+            return ''
+        
+        # Маппинг источников на логотипы (соответствует video_exporter.py)
+        logo_mapping = {
+            'nbc news': 'resources/logos/NBCNews.png',
+            'nbcnews': 'resources/logos/NBCNews.png',
+            'abc news': 'resources/logos/abc.png',
+            'abcnews': 'resources/logos/abc.png',
+            'reuters': 'resources/logos/Reuters.png',
+            'cnn': 'resources/logos/cnn.png',
+            'fox news': 'resources/logos/FoxNews.png',
+            'foxnews': 'resources/logos/FoxNews.png',
+            'washington post': 'resources/logos/WashingtonPost.png',
+            'washingtonpost': 'resources/logos/WashingtonPost.png',
+            'wall street journal': 'resources/logos/WSJ.png',
+            'wsj': 'resources/logos/WSJ.png',
+            'cnbc': 'resources/logos/CNBC.png',
+            'al jazeera': 'resources/logos/ALJAZEERA.png',
+            'aljazeera': 'resources/logos/ALJAZEERA.png',
+            'associated press': 'resources/logos/AssociatedPress.png',
+            'ap': 'resources/logos/AssociatedPress.png',
+            'financial times': 'resources/logos/Financial_Times_corporate_logo_(no_background).svg',
+            'ft': 'resources/logos/Financial_Times_corporate_logo_(no_background).svg',
+            'wall street journal': 'resources/logos/WSJ.png',
+            'wsj': 'resources/logos/WSJ.png',
+        }
+        
+        source_lower = source_name.lower().strip()
+        
+        # Проверяем точное совпадение
+        if source_lower in logo_mapping:
+            logo_path = logo_mapping[source_lower]
+            if Path(logo_path).exists():
+                return logo_path
+        
+        # Проверяем частичное совпадение
+        for key, logo_path in logo_mapping.items():
+            if key in source_lower or source_lower in key:
+                if Path(logo_path).exists():
+                    return logo_path
+        
+        # Пробуем найти файл по шаблону
+        potential_paths = [
+            f"resources/logos/{source_name}.png",
+            f"resources/logos/{source_name.replace(' ', '')}.png",
+            f"resources/logos/{source_name.upper()}.png",
+            f"resources/logos/{source_name.lower().replace(' ', '')}.png",
+        ]
+        
+        for path in potential_paths:
+            if Path(path).exists():
+                return path
+        
+        # Если ничего не найдено, возвращаем пустую строку
+        return ''
         
     def process_news_media(self, news_data: Dict) -> Dict[str, str]:
         """Обработка медиа-данных для новости"""
@@ -234,6 +295,10 @@ class MediaManager:
                 logger.info(f"🎬 Найдено видео: {video_url}")
                 media_result['video_url'] = video_url
             
+            # Устанавливаем путь к логотипу источника, если он не был установлен специализированным менеджером
+            if 'avatar_path' not in media_result or not media_result.get('avatar_path'):
+                media_result['avatar_path'] = self._get_logo_path_for_source(news_data.get('source', ''))
+            
             return media_result
             
         except Exception as e:
@@ -311,6 +376,12 @@ class MediaManager:
     def _download_and_process_image(self, image_url: str, news_title: str) -> Optional[str]:
         """Загрузка и обработка изображения"""
         try:
+            # Проверяем, является ли это уже локальным файлом
+            local_path_check = Path(image_url)
+            if local_path_check.exists() and local_path_check.is_file():
+                logger.info(f"📁 Обнаружен локальный файл, используем напрямую: {image_url}")
+                return str(image_url)
+            
             # Фильтруем неподдерживаемые URL
             if image_url.startswith(('data:', 'javascript:', '#', 'blob:')):
                 logger.warning(f"⚠️ Пропускаем неподдерживаемый URL: {image_url[:50]}...")
@@ -503,6 +574,12 @@ class MediaManager:
     
     def _download_and_process_video(self, video_url: str, news_title: str) -> Optional[str]:
         """Скачивание и обработка видео с поддержкой Twitter через yt-dlp"""
+        
+        # Проверяем, является ли это уже локальным файлом
+        local_path_check = Path(video_url)
+        if local_path_check.exists() and local_path_check.is_file():
+            logger.info(f"📁 Обнаружен локальный видео файл, используем напрямую: {video_url}")
+            return str(video_url)
         
         # Для Twitter/X видео пробуем yt-dlp, но только для полных URL твитов
         if ('twitter.com' in video_url or 'x.com' in video_url) and '/status/' in video_url:
